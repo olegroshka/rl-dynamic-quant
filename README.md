@@ -50,7 +50,6 @@ By the end, we obtain a strategy for **minimizing validation loss** (or perplexi
 
 ## Repository Structure
 
-```
 .
 ├── environment.py         # Defines the custom RL environment (QuantizationEnv)
 ├── policy.py              # A simple feed-forward policy network (PolicyNet)
@@ -59,7 +58,6 @@ By the end, we obtain a strategy for **minimizing validation loss** (or perplexi
 ├── main.py                # Entry point for data loading, environment setup, PPO training
 ├── requirements.txt       # Python dependencies
 └── README.md              # This file
-```
 
 ---
 
@@ -149,7 +147,6 @@ By the end, we obtain a strategy for **minimizing validation loss** (or perplexi
 
 ## Experiments & Results
 
-*(Placeholder example; adjust for your real results)*
 
 | Model/Method               | CommonsenseQA Val PPL | OpenBookQA Val PPL |
 |----------------------------|-----------------------|--------------------|
