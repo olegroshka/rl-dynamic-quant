@@ -159,7 +159,7 @@ By the end, we obtain a strategy for **minimizing validation loss** (or perplexi
 - **QLoRA Integration**: Merge the RL bit-width selection with a QLoRA approach to keep the base model 4-bit while learning LoRA adapters.  
 - **Better State Space**: Incorporate activation statistics into the environment state.  
 - **Complex Reward Functions**: Combine perplexity, memory usage, and downstream QA accuracy into a more comprehensive reward.  
-- **Scaling to Larger Models**: Try GPT-2-medium or GPT-Neo families with model parallel or more advanced memory-saving strategies.
+- **Scaling to Larger Models**: Experoments with larger models/families with model parallel or more advanced memory-saving strategies.
 
 ---
 
