@@ -1,4 +1,4 @@
-```markdown
+
 # RL-Based Dynamic Quantization
 
 **Table of Contents**  
