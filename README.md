@@ -12,8 +12,6 @@
 8. [Future Work](#future-work)  
 9. [License](#license)
 
----
-
 ## Overview
 
 This repository demonstrates an **RL-based (Reinforcement Learning) approach** to quantizing a GPT-2 model. Instead of using a uniform bit-width (e.g., 8-bit or 4-bit) across all layers, we dynamically choose different bit-widths per layer (or per group of layers) to balance **model accuracy** and **memory footprint**.
@@ -25,8 +23,6 @@ We leverage:
 - A **PPO-based** RL loop (Proximal Policy Optimization) to find the optimal quantization policy.
 
 By the end, we obtain a strategy for **minimizing validation loss** (or perplexity) while penalizing high-bit usage.
-
----
 
 ## Key Ideas
 
@@ -46,7 +42,6 @@ By the end, we obtain a strategy for **minimizing validation loss** (or perplexi
    - We compare our RL-based quantized model to baselines like **bitsandbytes 8-bit** or standard PyTorch dynamic quantization (where applicable).  
    - We measure perplexity or accuracy on validation sets (e.g., CommonsenseQA, OpenBookQA).
 
----
 
 ## Repository Structure
 
@@ -58,8 +53,6 @@ By the end, we obtain a strategy for **minimizing validation loss** (or perplexi
 ├── main.py                # Entry point for data loading, environment setup, PPO training
 ├── requirements.txt       # Python dependencies
 └── README.md              # This file
-
----
 
 ## Installation & Requirements
 
