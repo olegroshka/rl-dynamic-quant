@@ -68,7 +68,7 @@ By the end, we obtain a strategy for **minimizing validation loss** (or perplexi
 2. **Create and Activate an Environment**
 
    ```bash
-   conda create -n rlq_env python=3.9
+   conda create -n rlq_env python=3.11
    conda activate rlq_env
    ```
 
