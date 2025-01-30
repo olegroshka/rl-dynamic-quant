@@ -1,5 +1,5 @@
 ```markdown
-# RL-Based Dynamic Quantization for GPT-2
+# RL-Based Dynamic Quantization
 
 **Table of Contents**  
 1. [Overview](#overview)  
