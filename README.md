@@ -175,5 +175,5 @@ This project is licensed under the [MIT License](LICENSE). Feel free to use, mod
 ---
 
 **Questions or Feedback?**  
-Open an issue on this repository or contact `[Your Name]` at `[Your Email]`.
+Open an issue on this repository or contact `Oleg Roshka` at `oleg.roshka@proton.me`.
 ```
