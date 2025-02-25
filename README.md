@@ -1,5 +1,5 @@
-```markdown
-# RL-Based Dynamic Quantization for GPT-2
+
+# RL-Based Dynamic Quantization
 
 **Table of Contents**  
 1. [Overview](#overview)  
@@ -12,8 +12,6 @@
 8. [Future Work](#future-work)  
 9. [License](#license)
 
----
-
 ## Overview
 
 This repository demonstrates an **RL-based (Reinforcement Learning) approach** to quantizing a GPT-2 model. Instead of using a uniform bit-width (e.g., 8-bit or 4-bit) across all layers, we dynamically choose different bit-widths per layer (or per group of layers) to balance **model accuracy** and **memory footprint**.
@@ -25,8 +23,6 @@ We leverage:
 - A **PPO-based** RL loop (Proximal Policy Optimization) to find the optimal quantization policy.
 
 By the end, we obtain a strategy for **minimizing validation loss** (or perplexity) while penalizing high-bit usage.
-
----
 
 ## Key Ideas
 
@@ -46,11 +42,10 @@ By the end, we obtain a strategy for **minimizing validation loss** (or perplexi
    - We compare our RL-based quantized model to baselines like **bitsandbytes 8-bit** or standard PyTorch dynamic quantization (where applicable).  
    - We measure perplexity or accuracy on validation sets (e.g., CommonsenseQA, OpenBookQA).
 
----
 
 ## Repository Structure
 
-```
+```bash
 .
 ├── environment.py         # Defines the custom RL environment (QuantizationEnv)
 ├── policy.py              # A simple feed-forward policy network (PolicyNet)
@@ -60,8 +55,6 @@ By the end, we obtain a strategy for **minimizing validation loss** (or perplexi
 ├── requirements.txt       # Python dependencies
 └── README.md              # This file
 ```
-
----
 
 ## Installation & Requirements
 
@@ -75,7 +68,7 @@ By the end, we obtain a strategy for **minimizing validation loss** (or perplexi
 2. **Create and Activate an Environment**
 
    ```bash
-   conda create -n rlq_env python=3.9
+   conda create -n rlq_env python=3.11
    conda activate rlq_env
    ```
 
@@ -149,7 +142,6 @@ By the end, we obtain a strategy for **minimizing validation loss** (or perplexi
 
 ## Experiments & Results
 
-*(Placeholder example; adjust for your real results)*
 
 | Model/Method               | CommonsenseQA Val PPL | OpenBookQA Val PPL |
 |----------------------------|-----------------------|--------------------|
@@ -167,7 +159,7 @@ By the end, we obtain a strategy for **minimizing validation loss** (or perplexi
 - **QLoRA Integration**: Merge the RL bit-width selection with a QLoRA approach to keep the base model 4-bit while learning LoRA adapters.  
 - **Better State Space**: Incorporate activation statistics into the environment state.  
 - **Complex Reward Functions**: Combine perplexity, memory usage, and downstream QA accuracy into a more comprehensive reward.  
-- **Scaling to Larger Models**: Try GPT-2-medium or GPT-Neo families with model parallel or more advanced memory-saving strategies.
+- **Scaling to Larger Models**: Experoments with larger models/families with model parallel or more advanced memory-saving strategies.
 
 ---
 
@@ -178,5 +170,5 @@ This project is licensed under the [MIT License](LICENSE). Feel free to use, mod
 ---
 
 **Questions or Feedback?**  
-Open an issue on this repository or contact `[Your Name]` at `[Your Email]`.
+Open an issue on this repository or contact `Oleg Roshka` at `oleg.roshka@proton.me`.
 ```
