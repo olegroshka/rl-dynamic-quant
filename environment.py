@@ -2,7 +2,6 @@ import torch
 import torch.nn as nn
 import numpy as np
 
-from transformers import GPT2LMHeadModel, AdamW
 from quant_utils import apply_quantization_to_layer
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -16,15 +15,18 @@ class QuantizationEnv:
       - Returns a reward that balances performance and bit usage
     """
 
-    def __init__(self, model, train_loader, val_loader, reference_model, dev=device, model_name="gpt2"):
+    def __init__(self, model, train_loader, val_loader, reference_model, dev=device, model_name="gpt2", finetune_steps=5, reward_scaling=0.01, lr=5e-5):
         self.device = dev
         self.model_name = model_name
+        self.finetune_steps = finetune_steps
+        self.reward_scaling = reward_scaling
 
         # The main model we'll quantize
         self.model = model.to(dev)
 
         # A reference model for baseline loss comparisons
         self.reference_model = reference_model.to(dev)
+        self.lr=lr
 
         self.train_loader = train_loader
         self.val_loader = val_loader
@@ -67,12 +69,12 @@ class QuantizationEnv:
         apply_quantization_to_layer(self.layers[self.layer_index], action_bits)
 
         # 2. Fine-tune
-        self.fine_tune(steps=5)
+        self.fine_tune(steps=self.finetune_steps)
 
         # 3. Evaluate
         new_loss = self.evaluate_loss(self.model)
         delta_loss = new_loss - self.baseline_loss
-        reward = -(delta_loss + 0.01 * action_bits)
+        reward = -(delta_loss + self.reward_scaling * action_bits)
         self.baseline_loss = new_loss
 
         # 4. Record bits for the current layer
@@ -101,7 +103,7 @@ class QuantizationEnv:
         """
         Minimal fine-tuning loop on training data loader.
         """
-        optimizer = AdamW(self.model.parameters(), lr=5e-5)
+        optimizer = torch.optim.AdamW(self.model.parameters(), lr=self.lr)
         self.model.train()
         step_count = 0
 

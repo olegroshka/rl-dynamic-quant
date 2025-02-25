@@ -10,7 +10,7 @@ from datasets import load_dataset
 
 from environment import QuantizationEnv
 from policy import PolicyNet
-from ppo_trainer import ppo_train
+from ppo_trainer_old import ppo_train
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
@@ -181,7 +181,7 @@ def main():
     policy = PolicyNet(state_dim=5, hidden_dim=32, num_actions=4).to(device)
 
     # 9. Train with PPO
-    ppo_train(env, policy, num_episodes=10, gamma=0.99, epsilon=0.2, lr=1e-3, dev=device)
+    ppo_train(env, policy, num_episodes=10, gamma=0.99, epsilon=0.2, lr=1e-3, bit_options=[4, 8, 8, 16], ppo_updates_per_iteration=3, dev=device)
 
     # Now, env.model (== model_fp32) has gone through RL-based layer-by-layer quantization.
 

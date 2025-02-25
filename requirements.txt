@@ -3,4 +3,6 @@ transformers>=4.20.0
 datasets>=2.0.0
 accelerate>=0.26.0
 bitsandbytes
+scikit-learn
+tqdm
 cd

@@ -1,12 +1,12 @@
-import os
+# ppo_trainer_old.py
 
 import torch
 import torch.nn.functional as F
 import torch.optim as optim
-from tqdm import trange
 import logging
-import json
+from tqdm import trange  # or tqdm, whichever you prefer
 
+# Set up logging
 logging.basicConfig(
     format="%(asctime)s - %(levelname)s - %(message)s",
     datefmt="%H:%M:%S",
@@ -15,32 +15,36 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+print("device: ", device)
 
-def ppo_train(env, policy, num_episodes=10, gamma=0.99, epsilon=0.2, lr=1e-3, bit_options=None, ppo_updates_per_iteration=3, dev=device, results_path='results'):
-    setupLogging(results_path)
+def ppo_train(env, policy, num_episodes=10, gamma=0.99, epsilon=0.2, lr=1e-3, bit_options=None, ppo_updates_per_iteration=3, dev=device):
+
     if bit_options is None:
-        bit_options = [2, 4, 8, 16]
+        bit_options = [4, 8, 8, 16]
+    #bit_options = [4, 8, 8, 16]
+    #bit_options = [2, 4, 8, 16]
+    #bit_options = [2, 4, 8]
 
     optimizer = optim.Adam(policy.parameters(), lr=lr)
     policy.to(dev)
     policy.train()
 
     final_info = {}
-    all_rewards = []
 
-    episode_iter = trange(num_episodes, desc="PPO Training")
-    for episode in episode_iter:
+    episode_iter = trange(num_episodes, desc="Training PPO")
+    for episode in range(episode_iter):
         state = env.reset()
         done = False
 
         states = []
         actions = []
         rewards = []
-        info_stats = []
         old_log_probs = []
+        episode_rewards = []
 
         # 1) Collect a full episode
         while not done:
+
             state_tensor = torch.FloatTensor(state).unsqueeze(0).to(dev)
             logits = policy(state_tensor)
             action_dist = F.softmax(logits, dim=-1)
@@ -48,24 +52,23 @@ def ppo_train(env, policy, num_episodes=10, gamma=0.99, epsilon=0.2, lr=1e-3, bi
             action_idx = torch.multinomial(action_dist, 1).item()
             action_bits = bit_options[action_idx]
 
+            # Detach old log-prob so it doesn't keep the graph
             log_prob = torch.log(action_dist[0, action_idx]).detach()
 
             next_state, reward, done, info = env.step(action_bits)
 
-            states.append(state_tensor.detach())
+            states.append(state_tensor.detach())  # or .cpu()
             actions.append(action_idx)
             rewards.append(reward)
             old_log_probs.append(log_prob)
+            episode_rewards.append(reward)
 
             state = next_state
 
-        if done and "episode_summary" in info:
-            info_stats.append(info)
-            final_info = info;
-            summary = info["episode_summary"]
-            final_loss = summary["final_loss"]
-            chosen_bits = summary["layer_bits"]
-            logger.info(f"[Episode {episode}] final bits = {chosen_bits}, final_loss={final_loss:.4f}")
+        if done and "chosen_bits_for_layer" in info:
+            final_info = info
+            logger.info(f"[Episode {episode}]: final layer bit choices = {info['chosen_bits_for_layer']}")
+
 
         # 2) Compute returns
         returns = []
@@ -76,11 +79,13 @@ def ppo_train(env, policy, num_episodes=10, gamma=0.99, epsilon=0.2, lr=1e-3, bi
 
         states = torch.cat(states, dim=0)
         actions = torch.LongTensor(actions).to(dev)
+        # stack and detach the old_log_probs as well
         old_log_probs = torch.stack(old_log_probs).to(dev)
         returns = torch.FloatTensor(returns).to(dev)
 
         # 3) Multiple PPO updates
         for _ in range(ppo_updates_per_iteration):
+            # New forward pass to get current log probs
             logits = policy(states)
             new_action_dists = F.softmax(logits, dim=-1)
             new_log_probs = torch.log(new_action_dists.gather(1, actions.unsqueeze(1)).squeeze(1))
@@ -94,34 +99,9 @@ def ppo_train(env, policy, num_episodes=10, gamma=0.99, epsilon=0.2, lr=1e-3, bi
             optimizer.step()
 
         total_reward = sum(rewards)
-        all_rewards.append(total_reward)
-
-        # Log info for this episode
-        logger.info(f"[Episode {episode}] total_reward={total_reward:.4f}, policy_loss={policy_loss.item():.4f}")
+        logger.info(f"Episode {episode}/{num_episodes - 1}: total_reward={total_reward:.4f}, final_loss={policy_loss.item():.4f}")
         episode_iter.set_postfix({
-            "episodic_reward": f"{total_reward:.2f}",
-            "policy_loss": f"{policy_loss.item():.2f}",
+            "episode_reward": f"{total_reward:.2f}",
         })
 
-    return final_info, all_rewards, info_stats
-
-
-def setupLogging(log_dir="results"):
-    os.makedirs(log_dir, exist_ok=True)
-    logger = logging.getLogger(__name__)
-    logger.setLevel(logging.INFO)
-
-    formatter = logging.Formatter(
-        fmt="%(asctime)s - %(levelname)s - %(message)s",
-        datefmt="%Y-%m-%d %H:%M:%S"
-    )
-
-    file_path = os.path.join(log_dir, "ppo.log")
-    file_handler = logging.FileHandler(file_path)
-    file_handler.setFormatter(formatter)
-
-    console_handler = logging.StreamHandler()
-    console_handler.setFormatter(formatter)
-
-    logger.addHandler(file_handler)
-    logger.addHandler(console_handler)
+    return final_info
