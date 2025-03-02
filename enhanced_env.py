@@ -1,11 +1,13 @@
-import torch
-import torch.nn as nn
-import numpy as np
 from dataclasses import dataclass
 from typing import List, Dict, Optional, Tuple
+
+import numpy as np
+import torch
+import torch.nn as nn
 from torch.utils.data import DataLoader
 
-from quant_utils import apply_quantization_to_layer
+from quantizer import Quantizer, Q_TYPE_SIZE
+
 
 @dataclass
 class LayerStats:
@@ -15,7 +17,7 @@ class LayerStats:
     gradient_norm: float
     attention_entropy: float  # measure of pattern diversity
     layer_idx: int
-    current_bits: int
+    current_quant_type: str
 
 class EnhancedQuantizationEnv:
     """
@@ -34,6 +36,7 @@ class EnhancedQuantizationEnv:
         train_loader: DataLoader,
         val_loader: DataLoader,
         reference_model: nn.Module,
+        quantizer: Quantizer,
         device: torch.device = None,
         curriculum_schedule: Optional[Dict] = None,
         reward_weights: Optional[Dict] = None,
@@ -47,7 +50,6 @@ class EnhancedQuantizationEnv:
             val_loader: validation dataloader
             reference_model: same architecture; used for baseline metrics
             device: torch device
-            curriculum_schedule: {step_threshold -> [allowed bits]}
             reward_weights: weighting for performance, memory, and stability components
             finetune_steps: number of steps for adaptive fine-tuning each layer
             lr: learning rate for fine-tuning
@@ -56,6 +58,7 @@ class EnhancedQuantizationEnv:
         self.model = model.to(self.device)
         self.reference_model = reference_model.to(self.device)
         self.train_loader = train_loader
+        self.quantizer = quantizer
         self.val_loader = val_loader
         self.finetune_steps = finetune_steps
         self.lr = lr
@@ -66,21 +69,14 @@ class EnhancedQuantizationEnv:
         self.layer_idx = 0  # which layer we're working on now
 
         # Enhanced layer statistics
-        self.layer_stats = [LayerStats(0, 0, 0, 0, i, -1) for i in range(self.num_layers)]
-
-        # Curriculum learning
-        # Example default: after step 0, only [4,8]; after 1000 steps, [2,4,8], etc.
-        self.curriculum_schedule = curriculum_schedule or {
-            0: [4, 8],
-            1000: [2, 4, 8],
-            2000: [2, 4, 8, 16],
-        }
+        self.layer_stats = [LayerStats(0, 0, 0, 0, i, "fp32") for i in range(self.num_layers)]
 
         # Reward weights - todo calibrate these
         self.reward_weights = reward_weights or {
-            'performance': 1.0,
-            'memory': 0.3,
-            'stability': 0.2
+            'performance': 1.0, #1.0,
+            'memory': 1.0, #0.3,
+            'entropy': 1.0,
+            'kl': 1.0
         }
 
         # Track global step for curriculum
@@ -123,7 +119,7 @@ class EnhancedQuantizationEnv:
                     gradient_norm=grad_norm,
                     attention_entropy=entropies[i],
                     layer_idx=i,
-                    current_bits=self.layer_stats[i].current_bits,
+                    current_quant_type=self.layer_stats[i].current_quant_type,
                 )
             )
         return stats
@@ -150,13 +146,6 @@ class EnhancedQuantizationEnv:
 
         return all_entropies
 
-    def get_available_bits(self) -> List[int]:
-        """Return the currently allowed bit choices from the curriculum schedule."""
-        available_bits = [4, 8]  # fallback
-        for step_threshold, bits in sorted(self.curriculum_schedule.items()):
-            if self.total_steps >= step_threshold:
-                available_bits = bits
-        return available_bits
 
     def reset(self):
         """
@@ -181,7 +170,7 @@ class EnhancedQuantizationEnv:
         init_state = self._build_state_representation()
         return init_state
 
-    def step(self, action_bits: int) -> Tuple[np.ndarray, float, bool, Dict]:
+    def step(self, action_quant_type: str) -> Tuple[np.ndarray, float, bool, Dict]:
         """
         Step function that:
           1. Applies quantization to the current layer
@@ -193,7 +182,7 @@ class EnhancedQuantizationEnv:
         """
         # 1. Quantize the current layer
         current_layer = self.layers[self.layer_idx]
-        self._quantize_layer(current_layer, action_bits)
+        self._quantize_layer(current_layer, action_quant_type)
 
         # 2. Fine-tune
         self._adaptive_fine_tune()
@@ -203,7 +192,7 @@ class EnhancedQuantizationEnv:
         # Compute reward
         reward, reward_info = self.compute_reward(
             new_loss,
-            action_bits,
+            action_quant_type,
             self.layer_idx
         )
 
@@ -211,7 +200,7 @@ class EnhancedQuantizationEnv:
         updated_layer_stats = self._get_layer_statistics(self.model)[self.layer_idx]
         self.layer_stats[self.layer_idx] = updated_layer_stats
         # Set the current_bits to the chosen action
-        self.layer_stats[self.layer_idx].current_bits = action_bits
+        self.layer_stats[self.layer_idx].current_quant_type = action_quant_type
 
         # 5. Build next state
         next_state = self._build_state_representation()
@@ -225,18 +214,23 @@ class EnhancedQuantizationEnv:
         info = {
             'reward_components': reward_info,
             'layer_stats': self.layer_stats[self.layer_idx - 1],
-            'available_bits': self.get_available_bits()
         }
+        for i, layer_stat in enumerate(self.layer_stats):
+            info[f'layer_stats_{i}'] = layer_stat
+
         if done:
             info['episode_summary'] = self._generate_episode_summary()
 
         return next_state, reward, done, info
 
-    def _quantize_layer(self, layer: nn.Module, bits: int):
-        """
-        Wrapper around the quant_utils function to quantize a single layer.
-        """
-        apply_quantization_to_layer(layer, bits)
+
+    def _quantize_layer(self, layer: nn.Module, quant_type: str):
+        for name, child in layer.named_children():
+            if isinstance(child, nn.Linear):
+                setattr(layer, name, self.quantizer.quantize_linear_layer(child, quant_type))
+            else:
+                self._quantize_layer(child, quant_type)
+
 
     def _adaptive_fine_tune(self):
         """
@@ -284,7 +278,158 @@ class EnhancedQuantizationEnv:
 
         return total_loss / count if count > 0 else 0.0
 
-    def compute_reward(
+    def compute_reward_old(self, new_loss: float, chosen_bits: int, layer_idx: int) -> Tuple[float, Dict]:
+        baseline_loss = self.baseline_metrics['loss']
+
+        # 1) Performance: simpler difference (baseline - new_loss)
+        perf_diff = baseline_loss - new_loss
+        #perf_diff = max(min(perf_diff, 2.0), -2.0)
+
+        # Multiply by weight
+        perf_reward = perf_diff * self.reward_weights['performance']
+
+        # 2) Memory reward
+        memory_factor = (16 - chosen_bits) / 16.0
+        memory_reward = memory_factor * self.reward_weights['memory']
+
+        # 3) Stability reward
+        layer_stat = self.layer_stats[layer_idx]
+        stability_factor = 1.0
+        if layer_stat.attention_entropy > 0.5:
+            stability_factor = 0.5
+        stability_reward = stability_factor * self.reward_weights['stability']
+
+        total_reward = perf_reward + memory_reward + stability_reward
+        reward_info = {
+            'performance': perf_reward,
+            'memory': memory_reward,
+            'stability': stability_reward,
+            'total': total_reward
+        }
+        return total_reward, reward_info
+
+
+    def compute_reward(self,
+                       quant_loss: float,
+                       quant_type: str,
+                       layer_idx: int) -> Tuple[float, Dict]:
+        """
+        A new reward function that combines:
+          1) Reference-vs-Quant Loss Delta
+          2) KL Divergence to Reference
+          3) Attention Entropy Preservation
+          4) Memory (bit) savings
+
+        We assume self.reward_weights dict has keys like:
+          { 'performance': float, 'kl': float, 'entropy': float, 'memory': float }
+
+        Returns:
+            total_reward (float): The scalar reward
+            reward_info (dict): Breakdown of individual reward components
+        """
+
+        # ------------------------------------------------------------------------
+        # 1) Compare new quant model's loss to the reference model's loss
+        #    "baseline_loss" was computed once at environment init.
+        # ------------------------------------------------------------------------
+        ref_loss = self.baseline_metrics["loss"]
+        perf_diff = ref_loss - quant_loss
+        perf_reward = perf_diff * self.reward_weights.get('performance', 1.0)
+
+        # ------------------------------------------------------------------------
+        # 2) KL Divergence from reference model
+        #    We'll do a forward pass on some batch to get p (quant) and q (ref)
+        #    If you haven't implemented a method for it, see _compute_kl_div()
+        # ------------------------------------------------------------------------
+        kl_value = self._compute_kl_divergence(
+            quant_model=self.model,
+            ref_model=self.reference_model
+        )
+        kl_reward = -kl_value * self.reward_weights.get('kl', 1.0)
+        # Negative sign because we want to minimize KL => larger KL => negative reward
+
+        # ------------------------------------------------------------------------
+        # 3) Attention Entropy Preservation on the current layer
+        #    We'll compare quant vs. reference attention on the current layer
+        # ------------------------------------------------------------------------
+        # Retrieve the attention entropy for *all* layers from each model
+        ref_entropies = self._compute_attention_entropy_all_layers(self.reference_model)
+        quant_entropies = self._compute_attention_entropy_all_layers(self.model)
+
+        # Compare only the current layer's entropies for local layer feedback
+        ref_layer_entropy = ref_entropies[layer_idx]
+        quant_layer_entropy = quant_entropies[layer_idx]
+
+        entropy_diff = quant_layer_entropy - ref_layer_entropy
+        # If quant_layer_entropy < ref_layer_entropy, it's a negative difference => penalty
+        # If quant_layer_entropy >= ref_layer_entropy, we want to reward that
+        entropy_reward = entropy_diff * self.reward_weights.get('entropy', 1.0)
+
+        # ------------------------------------------------------------------------
+        # 4) Bits-based memory reward
+        #    Fewer bits => more reward (like your existing memory approach)
+        # ------------------------------------------------------------------------
+        memory_factor = (16 - Q_TYPE_SIZE[quant_type]) / 16.0
+        memory_reward = memory_factor * self.reward_weights.get('memory', 1.0)
+
+        # ------------------------------------------------------------------------
+        # Combine all components
+        # ------------------------------------------------------------------------
+        total_reward = perf_reward + kl_reward + entropy_reward + memory_reward
+
+        reward_info = {
+            'perf_reward': perf_reward,
+            'kl_reward': kl_reward,
+            'entropy_reward': entropy_reward,
+            'memory_reward': memory_reward,
+            'total_reward': total_reward
+        }
+
+        return total_reward, reward_info
+
+    def _compute_kl_divergence(self, quant_model: nn.Module, ref_model: nn.Module) -> float:
+        """
+        Compute the average KL( p || q ) over one batch from self.train_loader or val_loader,
+        where p = quant_model logits distribution, q = reference_model logits distribution.
+
+        Returns:
+            kl (float): the scalar average KL divergence
+        """
+        quant_model.eval()
+        ref_model.eval()
+
+        # sample one batch for quickness for now (todo: try can average over more).
+        batch = next(iter(self.val_loader))
+        input_ids = batch["input_ids"].to(self.device)
+        attention_mask = batch["attention_mask"].to(self.device)
+
+        with torch.no_grad():
+            # Get logits from both models
+            quant_outputs = quant_model(input_ids, attention_mask=attention_mask)
+            ref_outputs = ref_model(input_ids, attention_mask=attention_mask)
+
+        # quant_logits, ref_logits: [batch_size, seq_len, vocab_size]
+        quant_logits = quant_outputs.logits
+        ref_logits = ref_outputs.logits
+
+        # Convert logits -> probabilities
+        #   p = softmax(quant_logits), q = softmax(ref_logits)
+        #   small epsilon to avoid log(0)
+        p = torch.nn.functional.softmax(quant_logits, dim=-1)
+        q = torch.nn.functional.softmax(ref_logits, dim=-1)
+
+        # KL(p||q) = sum( p * log(p/q) )
+        # We'll do an elementwise approach: p * (log p - log q)
+        kl_elementwise = p * (torch.log(p + 1e-10) - torch.log(q + 1e-10))
+        # Sum over vocab dimension => shape [batch_size, seq_len]
+        kl_per_token = kl_elementwise.sum(dim=-1)
+        # Then average over batch * sequence
+        kl_avg = kl_per_token.mean().item()
+
+        return kl_avg
+
+
+    def compute_reward_prev(
         self,
         new_loss: float,
         chosen_bits: int,
@@ -339,13 +484,14 @@ class EnhancedQuantizationEnv:
         #   [weight_mean, weight_std, gradient_norm, attention_entropy,
         #    normalized_layer_idx, normalized_current_bits]
         # Feel free to add more or remove some depending on your experiments.
+        qtype_size = Q_TYPE_SIZE.get(current_stats.current_quant_type, 32)  # fallback to 32 if unknown
         state = np.array([
             current_stats.weight_mean,
             current_stats.weight_std,
             current_stats.gradient_norm,
             current_stats.attention_entropy,
             self.layer_idx / self.num_layers,  # fraction of the way through layers
-            (current_stats.current_bits if current_stats.current_bits > 0 else 0) / 16.0,
+            (qtype_size if qtype_size > 0 else 0) / 16.0,
         ], dtype=np.float32)
 
         return state
@@ -357,7 +503,7 @@ class EnhancedQuantizationEnv:
         """
         final_loss = self.evaluate_loss(self.model)
         memory_saved = self._compute_memory_savings()
-        layer_bits = [stat.current_bits for stat in self.layer_stats]
+        layer_bits = [stat.current_quant_type for stat in self.layer_stats]
         attention_entropies = [stat.attention_entropy for stat in self.layer_stats]
 
         return {
@@ -379,7 +525,7 @@ class EnhancedQuantizationEnv:
         for i, layer in enumerate(self.layers):
             w = layer.attn.c_attn.weight
             num_params = w.numel()
-            chosen_bits = self.layer_stats[i].current_bits if self.layer_stats[i].current_bits > 0 else baseline_bits
+            chosen_bits = Q_TYPE_SIZE.get(self.layer_stats[i].current_quant_type, baseline_bits)
             quantized_params += num_params * chosen_bits
             total_params += num_params * baseline_bits
 

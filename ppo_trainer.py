@@ -1,11 +1,11 @@
-import os
+import logging
 
 import torch
 import torch.nn.functional as F
 import torch.optim as optim
 from tqdm import trange
-import logging
-import json
+
+from log_utils import setupLogging
 
 logging.basicConfig(
     format="%(asctime)s - %(levelname)s - %(message)s",
@@ -104,24 +104,3 @@ def ppo_train(env, policy, num_episodes=10, gamma=0.99, epsilon=0.2, lr=1e-3, bi
         })
 
     return final_info, all_rewards, info_stats
-
-
-def setupLogging(log_dir="results"):
-    os.makedirs(log_dir, exist_ok=True)
-    logger = logging.getLogger(__name__)
-    logger.setLevel(logging.INFO)
-
-    formatter = logging.Formatter(
-        fmt="%(asctime)s - %(levelname)s - %(message)s",
-        datefmt="%Y-%m-%d %H:%M:%S"
-    )
-
-    file_path = os.path.join(log_dir, "ppo.log")
-    file_handler = logging.FileHandler(file_path)
-    file_handler.setFormatter(formatter)
-
-    console_handler = logging.StreamHandler()
-    console_handler.setFormatter(formatter)
-
-    logger.addHandler(file_handler)
-    logger.addHandler(console_handler)
