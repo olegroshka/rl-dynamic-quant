@@ -158,3 +158,6 @@ def save_results(output_dir,
 
 if __name__ == "__main__":
     main()
+
+# example usage:
+# python train.py --name gpt-2-EAQ-100-v1 --episodes 100 --finetune_steps 5 --quant_types nf4,fp4,int8,fp16
