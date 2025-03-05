@@ -37,7 +37,7 @@ def main():
     parser.add_argument("--lr", type=float, default=1e-3, help="Learning rate for policy network (default: 1e-3)")
     parser.add_argument("--finetune_steps", type=int, default=5, help="Number of fine-tuning steps per layer (default: 5)")
     parser.add_argument("--quant_types", type=str, default="nf4,fp4,int8,fp16", help="Supported quantization types: nf4, fp4, int8, fp16, bf16, fp32")
-    parser.add_argument("--reference_model_dir", type=str, default="results/gpt-2-reference", help="Directory for the fine-tuned reference model")
+    parser.add_argument("--reference_model_dir", type=str, default=None, help="Directory for the fine-tuned reference model")
 
     args = parser.parse_args()
 
@@ -54,7 +54,11 @@ def main():
     model = GPT2LMHeadModel.from_pretrained(args.model).to(device)
     model.to(torch.float32)
 
-    reference_model = GPT2LMHeadModel.from_pretrained(args.reference_model_dir).to(device)
+    if args.reference_model_dir is not None:
+        reference_model = GPT2LMHeadModel.from_pretrained(args.reference_model_dir).to(device)
+    else:
+        reference_model = GPT2LMHeadModel.from_pretrained(args.model).to(device) #we start with the same model
+
     reference_model.to(torch.float32)
 
     data_handler = DataHandler(dataset_name=args.dataset, batch_size=args.batch_size, max_length=128)
@@ -63,10 +67,10 @@ def main():
     quantizer = Quantizer(compute_dtype=torch.float16, target_device=device)
 
     reward_weights = {
-        'performance': 10.0, #1.0,
-        'memory': 3.0, #0.2, #0.3, #0.85, #1.0
-        'entropy': 1.0,
-        'kl': 1.0
+        'performance': 100.0, #1.0,
+        'kl': 0.01,
+        'entropy': 0.3,
+        'memory': 10.0,  # 0.2, #0.3, #0.85, #1.0
     }
 
     env = EnhancedQuantizationEnv(
