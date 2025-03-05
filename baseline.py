@@ -1,6 +1,3 @@
-#!/usr/bin/env python
-# baseline.py - Create and save baselines with standard quantization approaches
-
 import argparse
 import json
 import logging
@@ -8,7 +5,7 @@ import os
 
 import torch
 from tqdm import tqdm
-from transformers import GPT2Tokenizer, AutoModelForCausalLM
+from transformers import GPT2Tokenizer, GPT2LMHeadModel
 
 from data_handler import DataHandler
 
@@ -21,23 +18,25 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
-class QuantizedModelCreator:
-    def __init__(self, model_name="gpt2", device=None):
+class ModelCreator:
+    def __init__(self, model_name="gpt2", bit_width=8, device=None):
         self.model_name = model_name
         self.device = device if device else torch.device("cuda" if torch.cuda.is_available() else "cpu")
         logger.info(f"Using device: {self.device}")
 
         # Load model and tokenizer
         self.tokenizer = GPT2Tokenizer.from_pretrained(model_name)
-        self.tokenizer.pad_token = self.tokenizer.eos_token
-        ##self.model = GPT2LMHeadModel.from_pretrained(model_name)
-        model_8bit = AutoModelForCausalLM.from_pretrained(
-            "gpt2",
-            load_in_8bit=True,  # This triggers 8-bit weights
-            device_map="auto",  # Places modules automatically
-        )
-        self.model = model_8bit
-        #self.model.to(self.device)
+        if self.tokenizer.pad_token is None:
+            self.tokenizer.pad_token = self.tokenizer.eos_token
+        self.model = GPT2LMHeadModel.from_pretrained(model_name)
+        # model_8bit = AutoModelForCausalLM.from_pretrained(
+        #     "gpt2",
+        #     load_in_4bit=bit_width == 4,  # This triggers 4-bit weights
+        #     load_in_8bit=bit_width == 8,  # This triggers 8-bit weights
+        #     device_map="auto",  # Places modules automatically
+        # )
+
+        self.model.to(self.device)
 
     def fine_tune(self, train_loader, epochs=3, lr=5e-5, max_grad_norm=1.0):
         """Fine-tune the model on the dataset"""
@@ -55,9 +54,7 @@ class QuantizedModelCreator:
                 input_ids = batch["input_ids"].to(self.device)
                 attention_mask = batch["attention_mask"].to(self.device)
 
-                # Mask padding tokens
-                labels = input_ids.clone()
-                labels[attention_mask == 0] = -100  # set padding tokens to -100 so they're ignored
+                labels = batch["labels"].to(self.device)
 
                 optimizer.zero_grad()
                 outputs = self.model(input_ids, attention_mask=attention_mask, labels=labels)
@@ -71,7 +68,6 @@ class QuantizedModelCreator:
 
                 # Gradient clipping to avoid exploding gradients
                 torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_grad_norm)
-
                 optimizer.step()
 
                 epoch_loss += loss.item()
@@ -93,7 +89,7 @@ class QuantizedModelCreator:
             for batch in tqdm(val_loader, desc="Evaluating"):
                 input_ids = batch["input_ids"].to(self.device)
                 attention_mask = batch["attention_mask"].to(self.device)
-                labels = batch["labels"].to(self.device)  # <-- Crucially use pre-computed labels!
+                labels = batch["labels"].to(self.device)  # use pre-computed partial labels
 
                 outputs = self.model(input_ids, attention_mask=attention_mask, labels=labels)
                 loss = outputs.loss
@@ -101,6 +97,10 @@ class QuantizedModelCreator:
                 valid_tokens = (labels != -100).sum().item()
                 total_loss += loss.item() * valid_tokens
                 total_valid_tokens += valid_tokens
+
+        if total_valid_tokens == 0:
+            logger.error("No valid tokens to evaluate. Did something go wrong with labels?")
+            return {"loss": float('inf'), "perplexity": float('inf')}
 
         avg_loss = total_loss / total_valid_tokens
         perplexity = torch.exp(torch.tensor(avg_loss)).item()
@@ -110,20 +110,18 @@ class QuantizedModelCreator:
 
         return {"loss": avg_loss, "perplexity": perplexity}
 
-
     def save_model(self, output_dir):
-        """Save the quantized model and results"""
+        """Save the model and tokenizer"""
         if not os.path.exists(output_dir):
             os.makedirs(output_dir)
 
-        # Save model
         logger.info(f"Saving model to {output_dir}")
         self.model.save_pretrained(output_dir)
         self.tokenizer.save_pretrained(output_dir)
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Create a baseline quantized model")
+    parser = argparse.ArgumentParser(description="Create a reference model.")
     parser.add_argument("--name", type=str, required=True, help="Name for the baseline experiment")
     parser.add_argument("--model", type=str, default="gpt2", help="Model name (default: gpt2)")
     parser.add_argument("--bit_width", type=int, default=8, help="Quantization bit width (default: 8)")
@@ -139,9 +137,10 @@ def main():
     if os.path.exists(output_dir):
         logger.warning(f"Output directory {output_dir} already exists. Files may be overwritten.")
 
-    # Create and configure the quantized model
-    creator = QuantizedModelCreator(model_name=args.model)
+    # Create and configure the model
+    creator = ModelCreator(model_name=args.model, bit_width=args.bit_width)
 
+    # Load dataset
     data_handler = DataHandler(dataset_name=args.dataset, batch_size=args.batch_size, max_length=128)
     train_loader, val_loader = data_handler.load_dataset()
 
@@ -149,23 +148,17 @@ def main():
     creator.fine_tune(train_loader, epochs=args.epochs, lr=args.learning_rate)
 
     # Evaluate before quantization
-    logger.info("Evaluating before quantization")
-    pre_quant_results = creator.evaluate(val_loader)
-
-    # Evaluate after quantization
-    logger.info("Evaluating after quantization")
-    post_quant_results = creator.evaluate(val_loader)
+    logger.info("Evaluating")
+    eval_results = creator.evaluate(val_loader)
 
     # Save model and results
     creator.save_model(output_dir)
 
-    # Save evaluation results
     results = {
         "model_name": args.model,
         "bit_width": args.bit_width,
         "dataset": args.dataset,
-        "pre_quantization": pre_quant_results,
-        "post_quantization": post_quant_results
+        "eval_results": eval_results
     }
 
     with open(os.path.join(output_dir, "results.json"), "w") as f:

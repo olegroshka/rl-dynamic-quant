@@ -1,12 +1,24 @@
+import copy
+import logging
 from dataclasses import dataclass
 from typing import List, Dict, Optional, Tuple
 
+import bitsandbytes as bnb
 import numpy as np
 import torch
 import torch.nn as nn
+from bitsandbytes.functional import dequantize_4bit
 from torch.utils.data import DataLoader
+from transformers import Conv1D
 
 from quantizer import Quantizer, Q_TYPE_SIZE
+
+logging.basicConfig(
+    format="%(asctime)s - %(levelname)s - %(message)s",
+    datefmt="%H:%M:%S",
+    level=logging.INFO,
+)
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -38,7 +50,6 @@ class EnhancedQuantizationEnv:
         reference_model: nn.Module,
         quantizer: Quantizer,
         device: torch.device = None,
-        curriculum_schedule: Optional[Dict] = None,
         reward_weights: Optional[Dict] = None,
         finetune_steps: int = 5,
         lr: float = 5e-5
@@ -57,16 +68,31 @@ class EnhancedQuantizationEnv:
         self.device = device if device is not None else torch.device("cuda" if torch.cuda.is_available() else "cpu")
         self.model = model.to(self.device)
         self.reference_model = reference_model.to(self.device)
+        self.ref_model_for_episode = None
         self.train_loader = train_loader
         self.quantizer = quantizer
         self.val_loader = val_loader
         self.finetune_steps = finetune_steps
         self.lr = lr
 
+        self.prev_loss = None  # Will hold the last step's cross-entropy
+
         # GPT-2 blocks: a list of transformer layers
         self.layers = list(self.model.transformer.h)
         self.num_layers = len(self.layers)
         self.layer_idx = 0  # which layer we're working on now
+
+        # Precompute total parameter count across the entire model
+        self.total_params = sum(p.numel() for p in self.model.parameters())
+
+        # For each layer, compute how many parameters it has.
+        # Then compute ratio = layer_params / total_params
+        self.layer_param_counts = [
+            sum(p.numel() for p in layer.parameters()) for layer in self.layers
+        ]
+        self.layer_param_ratios = [
+            layer_count / self.total_params for layer_count in self.layer_param_counts
+        ]
 
         # Enhanced layer statistics
         self.layer_stats = [LayerStats(0, 0, 0, 0, i, "fp32") for i in range(self.num_layers)]
@@ -101,16 +127,37 @@ class EnhancedQuantizationEnv:
         }
 
     def _get_layer_statistics(self, model: nn.Module) -> List[LayerStats]:
-        # 1) Do one forward pass (with attentions)
+        """
+        Computes per-layer statistics, including:
+          - weight mean/std
+          - gradient norm
+          - attention entropy
+        by performing a forward pass for attention entropies, then iterating
+        over each layer's c_attn weights. If a layer is in 4-bit form (bnb.nn.Params4bit),
+        we first dequantize to get real float values for mean/std.
+        """
+        # 1) Do one forward pass with output_attentions=True to compute attention entropies
         entropies = self._compute_attention_entropy_all_layers(model)
 
         stats = []
         for i, layer in enumerate(model.transformer.h):
             with torch.no_grad():
                 w = layer.attn.c_attn.weight
-                w_mean = w.mean().item()
-                w_std = w.std().item()
-                grad_norm = w.grad.norm().item() if w.grad is not None else 0.0
+
+                # Decide whether to dequantize or use regular .mean()/.std()
+                if isinstance(w, bnb.nn.Params4bit) and w.quant_state is not None:
+                    # Dequantize from 4-bit to real float
+                    w_dequant = dequantize_4bit(w.data, w.quant_state)
+                    w_mean = w_dequant.mean().item()
+                    w_std = w_dequant.std().item()
+                else:
+                    # Normal float16/bfloat16/float32 or int8
+                    # At least cast to float to avoid "Byte" or other issues
+                    w_mean = w.float().mean().item()
+                    w_std = w.float().std().item()
+
+                # For gradient norm, we assume w.grad is floating. If no grad, set 0
+                grad_norm = w.grad.norm().item() if (w.grad is not None) else 0.0
 
             stats.append(
                 LayerStats(
@@ -122,6 +169,7 @@ class EnhancedQuantizationEnv:
                     current_quant_type=self.layer_stats[i].current_quant_type,
                 )
             )
+
         return stats
 
     def _compute_attention_entropy_all_layers(self, model: nn.Module) -> List[float]:
@@ -146,29 +194,30 @@ class EnhancedQuantizationEnv:
 
         return all_entropies
 
-
     def reset(self):
         """
-        Reset environment for a new episode:
-        - Copy reference model weights into our main model
-        - Reset layer index
-        - Recompute baseline metrics if desired
-        - Return initial state
+        Start new episode:
+          - Copy reference model => self.ref_model_for_episode
+          - Copy reference model => self.model
+          - We'll do 1 layer step at a time, up to num_layers
         """
-        self.model.load_state_dict(self.reference_model.state_dict())
+        self.ref_model_for_episode = copy.deepcopy(self.reference_model).to(self.device)
+        self.model = copy.deepcopy(self.reference_model).to(self.device)
+
+        # Evaluate the cross-entropy of this fresh copy
+        #self.prev_loss = self.evaluate_loss(self.model)
+
+        # Refresh the 'self.layers' to point at the new model's blocks
+        self.layers = list(self.model.transformer.h)
+        self.num_layers = len(self.layers)
         self.layer_idx = 0
 
-        # Re-init layer_stats so that current_bits = -1 again
-        self.layer_stats = [LayerStats(0, 0, 0, 0, i, -1) for i in range(self.num_layers)]
+        self.layer_stats = [
+            LayerStats(0, 0, 0, 0, i, -1) for i in range(self.num_layers)
+        ]
 
-        # Could recompute the baseline on the fresh model if you want:
-        # self.baseline_metrics = self._compute_baseline_metrics()
+        return self._build_state_representation()
 
-        # Build an initial state. We can re-use _build_state_representation,
-        # but layer_idx=0 may not have interesting stats yet.
-        # We'll just do a dummy evaluation or let everything be zero.
-        init_state = self._build_state_representation()
-        return init_state
 
     def step(self, action_quant_type: str) -> Tuple[np.ndarray, float, bool, Dict]:
         """
@@ -180,18 +229,23 @@ class EnhancedQuantizationEnv:
           5. Builds next state
           6. Moves to next layer or ends episode
         """
+        # 0. fine-tune the episode reference model
+        self._adaptive_fine_tune(self.ref_model_for_episode)
+
         # 1. Quantize the current layer
         current_layer = self.layers[self.layer_idx]
         self._quantize_layer(current_layer, action_quant_type)
 
         # 2. Fine-tune
-        self._adaptive_fine_tune()
+        self._adaptive_fine_tune(self.model)
 
         # 3. Evaluate new loss
-        new_loss = self.evaluate_loss(self.model)
+        ref_loss = self.evaluate_loss(self.ref_model_for_episode)
+        quant_loss = self.evaluate_loss(self.model)
         # Compute reward
         reward, reward_info = self.compute_reward(
-            new_loss,
+            ref_loss,
+            quant_loss,
             action_quant_type,
             self.layer_idx
         )
@@ -224,36 +278,91 @@ class EnhancedQuantizationEnv:
         return next_state, reward, done, info
 
 
+    def debug_fp16_all_params(self, model: nn.Module):
+        """
+        Prints any parameters (including unnamed) that are physically stored in float16
+        and have requires_grad=True.
+        """
+        # 1) Collect named parameters into a dict {param_obj: name}
+        named_map = {}
+        for name, param in model.named_parameters():
+            named_map[param] = name
+
+        # 2) Iterate over *all* parameters from model.parameters()
+        #    Some might not appear in model.named_parameters() if not registered properly.
+        all_params = list(model.parameters())
+
+        found_any = False
+        for i, param in enumerate(all_params):
+            # See if param has a known name
+            param_name = named_map.get(param, f"<unnamed_param_{i}>")
+
+            # Check for float16 + requires_grad
+            if param.dtype == torch.float16 and param.requires_grad:
+                logger.info(f"WARNING: {param_name} is float16 + requires_grad=True!")
+                found_any = True
+
+        if not found_any:
+            logger.info("No leftover float16 trainable params found among all parameters.")
+
+
     def _quantize_layer(self, layer: nn.Module, quant_type: str):
         for name, child in layer.named_children():
-            if isinstance(child, nn.Linear):
-                setattr(layer, name, self.quantizer.quantize_linear_layer(child, quant_type))
+            # skip if it is already quantized
+            if isinstance(child, (bnb.nn.Linear8bitLt, bnb.nn.Linear4bit)):
+                continue
+            if isinstance(child, (nn.Linear, Conv1D)):
+                #logger.info(f"Quantizing layer {layer}, name {name}, with type {quant_type}")
+                new_mod = self.quantizer.quantize_linear_layer(child, quant_type)
+                setattr(layer, name, new_mod)
             else:
                 self._quantize_layer(child, quant_type)
 
 
-    def _adaptive_fine_tune(self):
-        """
-        Fine-tune the model for self.finetune_steps, using a simple training loop.
-        """
-        optimizer = torch.optim.AdamW(self.model.parameters(), lr=self.lr)
-        self.model.train()
-        step_count = 0
+    def _adaptive_fine_tune(self, model: nn.Module):
+        # 1) Make sure all non-bitsandbytes parameters are physically float32
+        #    and bitsandbytes params are requires_grad=False
+        self.freeze_quantised_params(model)
 
+        #self.debug_fp16_all_params(self.model)
+
+        # 2) Build optimizer only over trainable (float32) params
+        optim_params = [p for p in model.parameters() if p.requires_grad]
+        optimizer = torch.optim.AdamW(optim_params, lr=self.lr)
+
+        scaler = torch.amp.GradScaler('cuda')
+        self.model.train()
+
+        step_count = 0
         for batch in self.train_loader:
             input_ids = batch["input_ids"].to(self.device)
             attention_mask = batch["attention_mask"].to(self.device)
             labels = input_ids.clone()
 
             optimizer.zero_grad()
-            outputs = self.model(input_ids, attention_mask=attention_mask, labels=labels)
-            loss = outputs.loss
-            loss.backward()
-            optimizer.step()
+
+            # Mixed precision forward/backward
+            with torch.amp.autocast('cuda', dtype=torch.float32):
+                outputs = model(input_ids, attention_mask=attention_mask, labels=labels)
+                loss = outputs.loss
+
+            scaler.scale(loss).backward()
+            scaler.step(optimizer)
+            scaler.update()
 
             step_count += 1
             if step_count >= self.finetune_steps:
                 break
+
+    def freeze_quantised_params(self, model: nn.Module):
+        for param in model.parameters():
+            if isinstance(param, (bnb.nn.Params4bit, bnb.nn.Int8Params)):
+                param.requires_grad = False
+            else:
+                # force float32 if you suspect some param is still half
+                param.data = param.data.float()
+                param.requires_grad = True
+
 
     def evaluate_loss(self, model: nn.Module) -> float:
         """
@@ -278,38 +387,9 @@ class EnhancedQuantizationEnv:
 
         return total_loss / count if count > 0 else 0.0
 
-    def compute_reward_old(self, new_loss: float, chosen_bits: int, layer_idx: int) -> Tuple[float, Dict]:
-        baseline_loss = self.baseline_metrics['loss']
-
-        # 1) Performance: simpler difference (baseline - new_loss)
-        perf_diff = baseline_loss - new_loss
-        #perf_diff = max(min(perf_diff, 2.0), -2.0)
-
-        # Multiply by weight
-        perf_reward = perf_diff * self.reward_weights['performance']
-
-        # 2) Memory reward
-        memory_factor = (16 - chosen_bits) / 16.0
-        memory_reward = memory_factor * self.reward_weights['memory']
-
-        # 3) Stability reward
-        layer_stat = self.layer_stats[layer_idx]
-        stability_factor = 1.0
-        if layer_stat.attention_entropy > 0.5:
-            stability_factor = 0.5
-        stability_reward = stability_factor * self.reward_weights['stability']
-
-        total_reward = perf_reward + memory_reward + stability_reward
-        reward_info = {
-            'performance': perf_reward,
-            'memory': memory_reward,
-            'stability': stability_reward,
-            'total': total_reward
-        }
-        return total_reward, reward_info
-
 
     def compute_reward(self,
+                       ref_loss: float,
                        quant_loss: float,
                        quant_type: str,
                        layer_idx: int) -> Tuple[float, Dict]:
@@ -332,7 +412,7 @@ class EnhancedQuantizationEnv:
         # 1) Compare new quant model's loss to the reference model's loss
         #    "baseline_loss" was computed once at environment init.
         # ------------------------------------------------------------------------
-        ref_loss = self.baseline_metrics["loss"]
+        #ref_loss = self.baseline_metrics["loss"]
         perf_diff = ref_loss - quant_loss
         perf_reward = perf_diff * self.reward_weights.get('performance', 1.0)
 
@@ -365,12 +445,12 @@ class EnhancedQuantizationEnv:
         # If quant_layer_entropy >= ref_layer_entropy, we want to reward that
         entropy_reward = entropy_diff * self.reward_weights.get('entropy', 1.0)
 
-        # ------------------------------------------------------------------------
-        # 4) Bits-based memory reward
-        #    Fewer bits => more reward (like your existing memory approach)
-        # ------------------------------------------------------------------------
+        # 4) Memory reward with layer weighting
+        #    memory_factor is how many bits we save relative to a 16-bit baseline
+        #    then we multiply by this layer's fraction of total parameters
         memory_factor = (16 - Q_TYPE_SIZE[quant_type]) / 16.0
-        memory_reward = memory_factor * self.reward_weights.get('memory', 1.0)
+        layer_ratio = self.layer_param_ratios[layer_idx]  # precomputed fraction of total params in this layer
+        memory_reward = memory_factor * layer_ratio * self.reward_weights.get('memory', 1.0)
 
         # ------------------------------------------------------------------------
         # Combine all components
@@ -428,44 +508,6 @@ class EnhancedQuantizationEnv:
 
         return kl_avg
 
-
-    def compute_reward_prev(
-        self,
-        new_loss: float,
-        chosen_bits: int,
-        layer_idx: int
-    ) -> Tuple[float, Dict]:
-        """
-        Enhanced reward computation considering multiple factors:
-            - Performance impact (loss delta from baseline)
-            - Memory efficiency (fewer bits -> higher reward)
-            - Stability (penalize aggressive quant if layer has high attention entropy)
-        """
-        # 1) Performance: difference from baseline
-        loss_delta = new_loss - self.baseline_metrics['loss']
-        perf_reward = -loss_delta * self.reward_weights['performance']
-
-        # 2) Memory: scale reward by how many bits we saved
-        memory_factor = (16 - chosen_bits) / 16.0
-        memory_reward = memory_factor * self.reward_weights['memory']
-
-        # 3) Stability: if the layer has large attention entropy, penalize big changes
-        #    For example, if entropy > 0.5, we reduce the stability reward
-        layer_stat = self.layer_stats[layer_idx]
-        stability_factor = 1.0
-        if layer_stat.attention_entropy > 0.5:
-            stability_factor = 0.5  # reduce reward for aggressive quantization
-        stability_reward = stability_factor * self.reward_weights['stability']
-
-        total_reward = perf_reward + memory_reward + stability_reward
-        reward_info = {
-            'performance': perf_reward,
-            'memory': memory_reward,
-            'stability': stability_reward,
-            'total': total_reward
-        }
-
-        return total_reward, reward_info
 
     def _build_state_representation(self) -> np.ndarray:
         """

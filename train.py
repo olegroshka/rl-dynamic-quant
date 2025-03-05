@@ -52,18 +52,20 @@ def main():
     tokenizer.pad_token = tokenizer.eos_token
 
     model = GPT2LMHeadModel.from_pretrained(args.model).to(device)
+    model.to(torch.float32)
 
     reference_model = GPT2LMHeadModel.from_pretrained(args.reference_model_dir).to(device)
+    reference_model.to(torch.float32)
 
     data_handler = DataHandler(dataset_name=args.dataset, batch_size=args.batch_size, max_length=128)
     train_loader, val_loader = data_handler.load_dataset()
 
-    quantizer = Quantizer(compute_dtype=torch.float16)
+    quantizer = Quantizer(compute_dtype=torch.float16, target_device=device)
 
     reward_weights = {
-        'performance': 1.0, #1.0,
-        'memory': 0.3, #0.85, #1.0
-        'entropy': 1.0, #1.0
+        'performance': 10.0, #1.0,
+        'memory': 3.0, #0.2, #0.3, #0.85, #1.0
+        'entropy': 1.0,
         'kl': 1.0
     }
 

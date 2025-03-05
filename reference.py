@@ -28,7 +28,7 @@ class ModelCreator:
         self.tokenizer = GPT2Tokenizer.from_pretrained(model_name)
         if self.tokenizer.pad_token is None:
             self.tokenizer.pad_token = self.tokenizer.eos_token
-        self.model = GPT2LMHeadModel.from_pretrained(model_name)
+        self.model = GPT2LMHeadModel.from_pretrained(model_name, torch_dtype=torch.float32)
         self.model.to(self.device)
 
     def fine_tune(self, train_loader, epochs=3, lr=5e-5, max_grad_norm=1.0):
@@ -148,7 +148,6 @@ def main():
 
     results = {
         "model_name": args.model,
-        "bit_width": args.bit_width,
         "dataset": args.dataset,
         "eval_results": eval_results
     }
