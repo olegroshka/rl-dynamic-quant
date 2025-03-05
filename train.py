@@ -67,10 +67,10 @@ def main():
     quantizer = Quantizer(compute_dtype=torch.float16, target_device=device)
 
     reward_weights = {
-        'performance': 100.0, #1.0,
-        'kl': 0.01,
-        'entropy': 0.3,
-        'memory': 10.0,  # 0.2, #0.3, #0.85, #1.0
+        'performance': 10.0, #1.0,
+        'kl': 0.5,
+        'entropy': 0.5,
+        'memory': 4.0,  # 0.2, #0.3, #0.85, #1.0
     }
 
     env = EnhancedQuantizationEnv(

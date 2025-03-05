@@ -423,7 +423,7 @@ class EnhancedQuantizationEnv:
         # ------------------------------------------------------------------------
         kl_value = self._compute_kl_divergence(
             quant_model=self.model,
-            ref_model=self.reference_model
+            ref_model=self.ref_model_for_episode
         )
         kl_reward = -kl_value * self.reward_weights.get('kl', 1.0)
         # Negative sign because we want to minimize KL => larger KL => negative reward
