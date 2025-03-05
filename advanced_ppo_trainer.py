@@ -1,5 +1,5 @@
 # advanced_ppo_trainer.py
-
+import copy
 from collections import namedtuple
 
 import numpy as np
@@ -10,7 +10,7 @@ from log_utils import setupLogging
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-RolloutStep = namedtuple("RolloutStep", ["state", "action", "reward", "value", "log_prob"])
+RolloutStep = namedtuple("RolloutStep", ["state", "action", "reward", "value", "log_prob", "done"])
 
 class AdvancedPPOTrainer:
     def __init__(
@@ -23,6 +23,8 @@ class AdvancedPPOTrainer:
         lam=0.95,
         clip_ratio=0.2,
         lr=1e-3,
+        kl_coeff=0.5,
+        entropy_coeff=0.01,
         train_policy_iters=3,
         results_path="results"):
         """
@@ -37,6 +39,7 @@ class AdvancedPPOTrainer:
           train_policy_iters: how many epochs of policy update per episode
         """
 
+        self.kl_coeff = kl_coeff
         self.logger = setupLogging(results_path)
         self.env = env
         self.policy = policy
@@ -46,6 +49,7 @@ class AdvancedPPOTrainer:
         self.clip_ratio = clip_ratio
         self.train_policy_iters = train_policy_iters
         self.quant_types = quant_types
+        self.entropy_coeff = entropy_coeff
 
         self.optimizer = torch.optim.Adam(self.policy.parameters(), lr=lr)
 
@@ -89,7 +93,8 @@ class AdvancedPPOTrainer:
                     action=action_idx,
                     reward=reward,
                     value=value_t,
-                    log_prob=log_prob
+                    log_prob=log_prob,
+                    done=done
                 )
             )
 
@@ -97,15 +102,46 @@ class AdvancedPPOTrainer:
 
         return rollout, info
 
-    def compute_returns_and_advantages(self, rollout):
+    def compute_gae(self, rollout):
         """
-        Using either standard discounted returns or GAE-lambda.
-        For simplicity here, let's do standard returns + advantage = returns - baseline_value.
+        Computes GAE-lambda advantages and returns.
+        We assume the episode ends fully, so for the last step we set next_value=0.
+        If done[t], we do not bootstrap further from that step.
         """
         rewards = [step.reward for step in rollout]
-        #values = [step.value for step in rollout]
-        # We'll add a terminal value of 0 for convenience
-        #values = values + [0.0]
+        values = [step.value for step in rollout]
+        dones = [step.done for step in rollout]
+        length = len(rollout)
+
+        advantages = np.zeros(length, dtype=np.float32)
+        gae = 0.0
+
+        # Go backwards from last step to first
+        for t in reversed(range(length)):
+            if t == length - 1:
+                next_value = 0.0
+                next_nonterminal = 1.0 - float(dones[t])
+            else:
+                next_value = values[t+1] if not dones[t] else 0.0
+                next_nonterminal = 1.0 - float(dones[t])
+
+            delta = rewards[t] + self.gamma * next_value - values[t]
+            gae = delta + self.gamma * self.lam * gae * next_nonterminal
+            advantages[t] = gae
+
+        returns = advantages + np.array(values, dtype=np.float32)
+        return returns, advantages
+
+
+    def compute_returns_and_advantages(self, rollout):
+        return self.compute_gae(rollout)
+
+
+    def compute_returns_and_advantages_prev(self, rollout):
+        """
+        Standard returns + advantage = returns - baseline_value.
+        """
+        rewards = [step.reward for step in rollout]
 
         returns = []
         G = 0
@@ -129,40 +165,50 @@ class AdvancedPPOTrainer:
         loss = self.baseline.update(states, targets)
         return loss
 
-    def update_policy_ppo(self, rollout, returns, advantages):
+    def update_policy_ppo(self, rollout, advantages):
         """
         Perform the clipped PPO update. We'll do a few epochs over the entire
         collected batch (which is the entire episode).
         """
-
         states_np = np.array([step.state for step in rollout], dtype=np.float32)
         actions_np = np.array([step.action for step in rollout], dtype=np.int64)
         old_log_probs_np = np.array([step.log_prob for step in rollout], dtype=np.float32)
         adv_np = np.array(advantages, dtype=np.float32)
-        #ret_np = np.array(returns, dtype=np.float32)
 
         states = torch.from_numpy(states_np).to(device)
         actions = torch.from_numpy(actions_np).to(device)
         old_log_probs = torch.from_numpy(old_log_probs_np).to(device)
-        advantages_t = torch.from_numpy(adv_np).to(device)
-        #returns_t = torch.from_numpy(ret_np).to(device)
+        adv_t = torch.from_numpy(adv_np).to(device)
 
         # Normalize advantages if desired
-        advantages_t = (advantages_t - advantages_t.mean()) / (advantages_t.std() + 1e-8)
+        adv_t = (adv_t - adv_t.mean()) / (adv_t.std() + 1e-8)
+
+        # old policy
+        old_policy = copy.deepcopy(self.policy)
+        old_policy.eval()
 
         # Multiple epochs (train_policy_iters)
         for _ in range(self.train_policy_iters):
             dist = self.policy.action_distribution(states)
-            new_log_probs = dist.log_prob(actions)
+            # the old distribution for KL
+            with torch.no_grad():
+                old_dist = old_policy.action_distribution(states)
 
-            ratio = torch.exp(new_log_probs - old_log_probs)
             # PPO objectives
-            obj1 = ratio * advantages_t
-            obj2 = torch.clamp(ratio, 1.0 - self.clip_ratio, 1.0 + self.clip_ratio) * advantages_t
+            new_log_probs = dist.log_prob(actions)
+            ratio = torch.exp(new_log_probs - old_log_probs)
+            obj1 = ratio * adv_t
+            obj2 = torch.clamp(ratio, 1.0 - self.clip_ratio, 1.0 + self.clip_ratio) * adv_t
 
             policy_loss = -torch.mean(torch.min(obj1, obj2))
 
-            # Optional: You might add an entropy bonus or KL penalty, etc.
+            # KL divergence new vs old
+            kl_div = torch.distributions.kl_divergence(old_dist, dist).mean()
+
+            # Entropy bonus
+            entropy = dist.entropy().mean()
+
+            policy_loss = policy_loss + self.kl_coeff * kl_div - self.entropy_coeff * entropy
 
             self.optimizer.zero_grad()
             policy_loss.backward()
@@ -198,7 +244,7 @@ class AdvancedPPOTrainer:
             baseline_loss = self.update_baseline(rollout, returns)
 
             # 3) Policy update
-            policy_loss = self.update_policy_ppo(rollout, returns, advantages)
+            policy_loss = self.update_policy_ppo(rollout, advantages)
 
             # sum of the raw rewards from the rollout
             ep_reward = sum([step.reward for step in rollout])
