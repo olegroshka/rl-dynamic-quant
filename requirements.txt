@@ -6,3 +6,5 @@ bitsandbytes
 scikit-learn
 tqdm
 cd
+modal
+wandb

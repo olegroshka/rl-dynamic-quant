@@ -6,6 +6,7 @@ import os
 
 import torch
 from transformers import GPT2LMHeadModel, GPT2Tokenizer
+import wandb
 
 from advanced_ppo_trainer import AdvancedPPOTrainer
 from baseline_network import BaselineNetwork
@@ -50,6 +51,8 @@ def main():
 
     tokenizer = GPT2Tokenizer.from_pretrained(args.model)
     tokenizer.pad_token = tokenizer.eos_token
+
+    wandb.init(project="DynaQ")  # Initialize wandb
 
     model = GPT2LMHeadModel.from_pretrained(args.model).to(device)
     model.to(torch.float32)
@@ -155,6 +158,7 @@ def save_results(output_dir,
     with open(os.path.join(output_dir, "info_stats.json"), "w") as f:
         json.dump(cleaned_info_stats, f, indent=2)
 
+    wandb.finish()
 
 if __name__ == "__main__":
     main()
