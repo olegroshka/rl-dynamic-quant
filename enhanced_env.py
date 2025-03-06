@@ -70,6 +70,7 @@ class EnhancedQuantizationEnv:
         self.reference_model = reference_model.to(self.device)
         self.ref_model_for_episode = None
         self.train_loader = train_loader
+        self.finetune_iter = iter(self.train_loader)
         self.quantizer = quantizer
         self.val_loader = val_loader
         self.finetune_steps = finetune_steps
@@ -219,27 +220,47 @@ class EnhancedQuantizationEnv:
         return self._build_state_representation()
 
 
+    def _get_finetune_batches(self, num_steps: int):
+        """Get exactly `num_steps` mini-batches from train_loader,
+        rewinding to the start if we run out."""
+        batches = []
+        for _ in range(num_steps):
+            try:
+                batch = next(self.finetune_iter)
+            except StopIteration:
+                # If we exhaust the loader, start over
+                self.finetune_iter = iter(self.train_loader)
+                batch = next(self.finetune_iter)
+            batches.append(batch)
+        return batches
+
+
     def step(self, action_quant_type: str) -> Tuple[np.ndarray, float, bool, Dict]:
         """
         Step function that:
-          1. Applies quantization to the current layer
-          2. Fine-tunes the model for self.finetune_steps
-          3. Evaluates new loss and computes reward
-          4. Updates layer stats
-          5. Builds next state
-          6. Moves to next layer or ends episode
+          1. Fetch the same data for both reference and quantized model
+          2  Fine-tune the episode reference model
+          3. Applies quantization to the current layer
+          4. Fine-tunes the quantized model for self.finetune_steps
+          5. Evaluates new loss and computes reward
+          6. Updates layer stats
+          7. Builds next state
+          8. Moves to next layer or ends episode
         """
-        # 0. fine-tune the episode reference model
-        self._adaptive_fine_tune(self.ref_model_for_episode)
+        # 1 Fetch the same data for both reference and quantized model
+        finetune_batches = self._get_finetune_batches(self.finetune_steps)
 
-        # 1. Quantize the current layer
+        # 2 Fine-tune the episode reference model for a few steps
+        self._adaptive_fine_tune(self.ref_model_for_episode, finetune_batches)
+
+        # 3 Quantize the current layer
         current_layer = self.layers[self.layer_idx]
         self._quantize_layer(current_layer, action_quant_type)
 
-        # 2. Fine-tune
-        self._adaptive_fine_tune(self.model)
+        # 4 Fine-tune quantized model for the same few steps
+        self._adaptive_fine_tune(self.model, finetune_batches)
 
-        # 3. Evaluate new loss
+        # 5 Evaluate new loss
         ref_loss = self.evaluate_loss(self.ref_model_for_episode)
         quant_loss = self.evaluate_loss(self.model)
         # Compute reward
@@ -250,16 +271,16 @@ class EnhancedQuantizationEnv:
             self.layer_idx
         )
 
-        # 4. Update layer stats for the layer we just quantized
+        # 6 Update layer stats for the layer we just quantized
         updated_layer_stats = self._get_layer_statistics(self.model)[self.layer_idx]
         self.layer_stats[self.layer_idx] = updated_layer_stats
         # Set the current_bits to the chosen action
         self.layer_stats[self.layer_idx].current_quant_type = action_quant_type
 
-        # 5. Build next state
+        # 7 Build next state
         next_state = self._build_state_representation()
 
-        # 6. Move to next layer
+        # 8 Move to next layer
         self.layer_idx += 1
         self.total_steps += 1  # global step for curriculum
 
@@ -319,7 +340,7 @@ class EnhancedQuantizationEnv:
                 self._quantize_layer(child, quant_type)
 
 
-    def _adaptive_fine_tune(self, model: nn.Module):
+    def _adaptive_fine_tune(self, model: nn.Module, batch_list: List[Dict[str, torch.Tensor]]):
         # 1) Make sure all non-bitsandbytes parameters are physically float32
         #    and bitsandbytes params are requires_grad=False
         self.freeze_quantised_params(model)
@@ -333,8 +354,7 @@ class EnhancedQuantizationEnv:
         scaler = torch.amp.GradScaler('cuda')
         self.model.train()
 
-        step_count = 0
-        for batch in self.train_loader:
+        for batch in batch_list:
             input_ids = batch["input_ids"].to(self.device)
             attention_mask = batch["attention_mask"].to(self.device)
             labels = input_ids.clone()
@@ -350,9 +370,6 @@ class EnhancedQuantizationEnv:
             scaler.step(optimizer)
             scaler.update()
 
-            step_count += 1
-            if step_count >= self.finetune_steps:
-                break
 
     def freeze_quantised_params(self, model: nn.Module):
         for param in model.parameters():
@@ -465,7 +482,7 @@ class EnhancedQuantizationEnv:
             'total_reward': total_reward
         }
 
-        logger.debug(f"Layer {layer_idx}: Reward {reward_info}")
+        logger.info(f"Layer {layer_idx}: Reward {reward_info}")
 
         return total_reward, reward_info
 
