@@ -465,6 +465,8 @@ class EnhancedQuantizationEnv:
             'total_reward': total_reward
         }
 
+        logger.debug(f"Layer {layer_idx}: Reward {reward_info}")
+
         return total_reward, reward_info
 
     def _compute_kl_divergence(self, quant_model: nn.Module, ref_model: nn.Module) -> float:

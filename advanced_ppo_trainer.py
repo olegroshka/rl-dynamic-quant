@@ -133,11 +133,11 @@ class AdvancedPPOTrainer:
         return returns, advantages
 
 
-    def compute_returns_and_advantages(self, rollout):
+    def compute_returns_and_advantages_v1(self, rollout):
         return self.compute_gae(rollout)
 
 
-    def compute_returns_and_advantages_prev(self, rollout):
+    def compute_returns_and_advantages(self, rollout):
         """
         Standard returns + advantage = returns - baseline_value.
         """
@@ -184,15 +184,15 @@ class AdvancedPPOTrainer:
         adv_t = (adv_t - adv_t.mean()) / (adv_t.std() + 1e-8)
 
         # old policy
-        old_policy = copy.deepcopy(self.policy)
-        old_policy.eval()
+        #old_policy = copy.deepcopy(self.policy)
+        #old_policy.eval()
 
         # Multiple epochs (train_policy_iters)
         for _ in range(self.train_policy_iters):
             dist = self.policy.action_distribution(states)
             # the old distribution for KL
-            with torch.no_grad():
-                old_dist = old_policy.action_distribution(states)
+            #with torch.no_grad():
+             #   old_dist = old_policy.action_distribution(states)
 
             # PPO objectives
             new_log_probs = dist.log_prob(actions)
@@ -203,12 +203,10 @@ class AdvancedPPOTrainer:
             policy_loss = -torch.mean(torch.min(obj1, obj2))
 
             # KL divergence new vs old
-            kl_div = torch.distributions.kl_divergence(old_dist, dist).mean()
-
+            #kl_div = torch.distributions.kl_divergence(old_dist, dist).mean()
             # Entropy bonus
-            entropy = dist.entropy().mean()
-
-            policy_loss = policy_loss + self.kl_coeff * kl_div - self.entropy_coeff * entropy
+            #entropy = dist.entropy().mean()
+            #policy_loss = policy_loss + self.kl_coeff * kl_div - self.entropy_coeff * entropy
 
             self.optimizer.zero_grad()
             policy_loss.backward()
