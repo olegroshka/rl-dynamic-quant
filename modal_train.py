@@ -75,14 +75,14 @@ def main():
     """
     # 1) Start the remote training run
     experiment_name = "gpt2-250-gae-v1"    # The name passed above
-    # future = run_train.remote(
-    #     name=experiment_name,
-    #     model="gpt2",
-    #     dataset="commonsense_qa",
-    #     episodes=250,
-    # )
-    # # 2) Wait for completion
-    # future.result()
+    future = run_train.remote(
+        name=experiment_name,
+        model="gpt2",
+        dataset="commonsense_qa",
+        episodes=250,
+    )
+    # 2) Wait for completion
+    future.result()
 
     # 3) Use Modal CLI to download results automatically
     local_dir = f"results/"
