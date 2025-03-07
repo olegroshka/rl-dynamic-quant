@@ -1,21 +1,28 @@
+import pathlib
+import shutil
+
 import modal
 import os
 import subprocess
 
+from datasets import experimental
+from modal import Client
+
 # 1) Build a base image with your dependencies
 #    Make sure you have a requirements.txt listing everything needed by train.py
-image = modal.Image.debian_slim().pip_install_from_requirements("requirements.txt")
+image = (modal.Image.debian_slim().pip_install_from_requirements("requirements.txt"))
 
 # 2) Create a Volume for saving results (optional, but recommended)
 results_volume = modal.Volume.from_name("fine_tuned_volume")
 
 # 3) Define the Modal app (or 'stub')
-stub = modal.Stub("DynaQ-RL-pipeline")
+stub = modal.App("DynaQ-RL-pipeline")
 
 # 4) GPU + other config for the remote function
 @stub.function(
     image=image,
     gpu="H100:1",            # or "H100:1", "V100:1", etc.
+    block_network=False,
     timeout=86400,
     secrets=[
         modal.Secret.from_name("my-huggingface-secret"),
@@ -32,6 +39,8 @@ def run_train(
     dataset: str = "commonsense_qa",
     episodes: int = 10,
 ):
+    # remove any local GPT2 cache that might overshadow the Hugging Face model name
+
     """
     Calls train.py with the desired arguments on a remote GPU container.
     """
@@ -47,8 +56,9 @@ def run_train(
         f"--model={model}",
         f"--dataset={dataset}",
         f"--episodes={episodes}",
+        "--finetune_steps=10",
         "--lr=1e-3",
-        "--batch_size=8",
+        "--batch_size=64",
     ]
 
     print("Running command:", " ".join(cmd))
@@ -59,12 +69,34 @@ def run_train(
 @stub.local_entrypoint()
 def main():
     """
-    Entry point when you run `modal run modal_train.py`.
-    By default, runs a sample training job on the remote container.
+    When run locally (`modal run modal_train.py`), this will:
+      1) Kick off training remotely (run_train).
+      2) After training is done, download the results from the volume to a local folder.
     """
-    run_train.remote(
-        name="gpt-2-500-v0",
-        model="gpt2",
-        dataset="commonsense_qa",
-        episodes=10,
-    )
+    # 1) Start the remote training run
+    experiment_name = "gpt2-250-gae-v1"    # The name passed above
+    # future = run_train.remote(
+    #     name=experiment_name,
+    #     model="gpt2",
+    #     dataset="commonsense_qa",
+    #     episodes=250,
+    # )
+    # # 2) Wait for completion
+    # future.result()
+
+    # 3) Use Modal CLI to download results automatically
+    local_dir = f"results/"
+    volume_remote_path = f"/{experiment_name}"  # Note: root ('/') of volume is directly referenced by Modal CLI
+
+    # Ensure local directory exists
+    pathlib.Path(local_dir).mkdir(parents=True, exist_ok=True)
+
+    # Modal CLI command to get files from the remote volume
+    subprocess.run([
+        "modal", "volume", "get",
+        "fine_tuned_volume",
+        volume_remote_path,
+        local_dir
+    ], check=True)
+
+    print(f"Results for {experiment_name} have been downloaded to {local_dir}/{experiment_name}")

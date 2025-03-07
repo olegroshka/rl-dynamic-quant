@@ -1,5 +1,6 @@
 import copy
 import logging
+import math
 from dataclasses import dataclass
 from typing import List, Dict, Optional, Tuple
 
@@ -30,6 +31,39 @@ class LayerStats:
     attention_entropy: float  # measure of pattern diversity
     layer_idx: int
     current_quant_type: str
+
+
+def perplexity_sigmoid_reward(ref_ppl: float, quant_ppl: float, alpha: float = 5.0) -> float:
+    """
+    Returns a smooth, bounded reward in (0, 1) using a sigmoid function.
+
+    Args:
+        ref_ppl: Perplexity of the reference model
+        quant_ppl: Perplexity of the quantized model
+        alpha: scaling factor that controls how sharply the reward saturates.
+               Larger alpha => more "binary" (quickly saturates near 0 or 1).
+
+    Returns:
+        A scalar in (0, 1), where values > 0.5 mean quant is better than reference,
+        and values < 0.5 mean quant is worse, with a smooth transition.
+    """
+    # 1) Delta perplexity: positive if quant is better (lower perplexity)
+    delta_ppl = (ref_ppl - quant_ppl)
+
+    # 2) Sigmoid transform: 0.5 => no difference, > 0.5 => quant is better
+    #    If alpha * delta_ppl = 0 => reward=0.5
+    #    If alpha * delta_ppl >> 0 => reward approaches 1.0
+    #    If alpha * delta_ppl << 0 => reward approaches 0.0
+    #    We use a small Tensor conversion because sigmoid is a PyTorch op.
+    delta_tensor = torch.tensor(alpha * delta_ppl, dtype=torch.float32)
+    reward = torch.sigmoid(delta_tensor).item()  # to Python float
+
+    return reward
+
+
+def perplexity(val_loss):
+    return float(torch.exp(torch.tensor(val_loss))) if val_loss < 20 else float('inf')
+
 
 class EnhancedQuantizationEnv:
     """
@@ -76,7 +110,13 @@ class EnhancedQuantizationEnv:
         self.finetune_steps = finetune_steps
         self.lr = lr
 
-        self.prev_loss = None  # Will hold the last step's cross-entropy
+        # Track the current/previous losses and perplexities to build better states
+        self.current_loss = 0.0
+        self.current_quant_ppl = 0.0
+        self.last_quant_loss = None  # For measuring the change vs. previous layer
+        self.last_quant_ppl = None
+        self.loss_diff = 0.0
+        self.quant_ppl_diff = 0.0
 
         # GPT-2 blocks: a list of transformer layers
         self.layers = list(self.model.transformer.h)
@@ -116,7 +156,7 @@ class EnhancedQuantizationEnv:
         """Compute metrics on the reference model (or unmodified model)."""
         with torch.no_grad():
             val_loss = self.evaluate_loss(self.reference_model)
-            val_perplexity = float(torch.exp(torch.tensor(val_loss))) if val_loss < 20 else float('inf')
+            val_perplexity = perplexity(val_loss)
             memory_usage = sum(p.numel() * p.element_size() for p in self.reference_model.parameters())
 
         return {
@@ -213,9 +253,13 @@ class EnhancedQuantizationEnv:
         self.num_layers = len(self.layers)
         self.layer_idx = 0
 
-        self.layer_stats = [
-            LayerStats(0, 0, 0, 0, i, -1) for i in range(self.num_layers)
-        ]
+        # Reset stats and loss tracking
+        self.layer_stats = [LayerStats(0, 0, 0, 0, i, "fp32") for i in range(self.num_layers)]
+        self.current_loss = 0.0
+        self.current_quant_ppl = 0.0
+        self.last_quant_loss = None
+        self.loss_diff = 0.0
+        self.quant_ppl_diff = 0.0
 
         return self._build_state_representation()
 
@@ -263,6 +307,10 @@ class EnhancedQuantizationEnv:
         # 5 Evaluate new loss
         ref_loss = self.evaluate_loss(self.ref_model_for_episode)
         quant_loss = self.evaluate_loss(self.model)
+
+        # Update stored environment-level loss stats
+        self._update_env_loss_stats(quant_loss, ref_loss)
+
         # Compute reward
         reward, reward_info = self.compute_reward(
             ref_loss,
@@ -298,6 +346,25 @@ class EnhancedQuantizationEnv:
 
         return next_state, reward, done, info
 
+    def _update_env_loss_stats(self, quant_loss, ref_loss):
+        ref_ppl = perplexity(ref_loss)
+        quant_ppl = perplexity(quant_loss)
+        if self.last_quant_loss is None:
+            self.loss_diff = 0.0
+        else:
+            self.loss_diff = quant_loss - self.last_quant_loss
+
+        if self.last_quant_ppl is None:
+            self.quant_ppl_diff = 0.0
+        else:
+            self.quant_ppl_diff = quant_ppl - self.last_quant_ppl
+
+        self.last_quant_loss = quant_loss
+        self.last_quant_ppl = quant_ppl
+        self.current_loss = quant_loss
+        self.loss_diff = ref_loss - quant_loss
+        self.current_quant_ppl = quant_ppl
+        self.quant_ppl_diff = ref_ppl - quant_ppl
 
     def debug_fp16_all_params(self, model: nn.Module):
         """
@@ -404,7 +471,6 @@ class EnhancedQuantizationEnv:
 
         return total_loss / count if count > 0 else 0.0
 
-
     def compute_reward(self,
                        ref_loss: float,
                        quant_loss: float,
@@ -426,12 +492,33 @@ class EnhancedQuantizationEnv:
         """
 
         # ------------------------------------------------------------------------
+        # Loss based
         # 1) Compare new quant model's loss to the reference model's loss
         #    "baseline_loss" was computed once at environment init.
         # ------------------------------------------------------------------------
         #ref_loss = self.baseline_metrics["loss"]
-        perf_diff = ref_loss - quant_loss
-        perf_reward = perf_diff * self.reward_weights.get('performance', 1.0)
+        # perf_diff = ref_loss - quant_loss
+        # perf_reward = perf_diff * self.reward_weights.get('performance', 1.0)
+
+        # 1) Convert losses to perplexities
+        ref_ppl = perplexity(ref_loss) #math.exp(ref_loss) if ref_loss < 20 else float('inf')
+        quant_ppl = perplexity(quant_loss) #math.exp(quant_loss) if quant_loss < 20 else float('inf')
+
+        # 2) Performance reward using perplexity
+        # Option A: difference in perplexities
+        #   (the sign is negative if quant ppl is higher => negative reward)
+        perf_diff_ppl = ref_ppl - quant_ppl
+        perf_reward = perf_diff_ppl * self.reward_weights.get('performance', 1.0)
+
+        # TODO: try Option B: ratio-based term
+        #   ratio < 1 => quant is better => positive reward
+        #   ratio > 1 => quant is worse => negative reward
+        #ratio = quant_ppl / (ref_ppl + 1e-8)
+        #perf_reward = (1.0 - ratio) * self.reward_weights.get('performance', 1.0)
+
+        #perf_reward_raw = perplexity_sigmoid_reward(ref_ppl, quant_ppl, alpha=1.0)
+        # Optionally scale it with self.reward_weights
+        #perf_reward = perf_reward_raw * self.reward_weights.get('performance', 1.0)
 
         # ------------------------------------------------------------------------
         # 2) KL Divergence from reference model
@@ -541,11 +628,19 @@ class EnhancedQuantizationEnv:
             # If we're past the last layer (done), just replicate something stable
             current_stats = self.layer_stats[-1]
 
-        # Example 6D feature vector:
+        # Example state-size-D feature vector:
         #   [weight_mean, weight_std, gradient_norm, attention_entropy,
-        #    normalized_layer_idx, normalized_current_bits]
-        # Feel free to add more or remove some depending on your experiments.
+        #    normalized_layer_idx, normalized_current_bits...]
         qtype_size = Q_TYPE_SIZE.get(current_stats.current_quant_type, 32)  # fallback to 32 if unknown
+
+        # Quant type of previous layer
+        if self.layer_idx > 0:
+            prev_qtype = self.layer_stats[self.layer_idx - 1].current_quant_type
+            prev_qtype_size = Q_TYPE_SIZE.get(prev_qtype, 32)
+        else:
+            # If no previous layer, default to 16 (fp16) or something neutral
+            prev_qtype_size = 16
+
         state = np.array([
             current_stats.weight_mean,
             current_stats.weight_std,
@@ -553,6 +648,10 @@ class EnhancedQuantizationEnv:
             current_stats.attention_entropy,
             self.layer_idx / self.num_layers,  # fraction of the way through layers
             (qtype_size if qtype_size > 0 else 0) / 16.0,
+            self.current_quant_ppl,  # perplexity of current partial model
+            self.quant_ppl_diff,  # change in perplexity from previous step
+            self.loss_diff,  # change in loss from previous step
+            prev_qtype_size / 16.0,  # previous layer's quant type
         ], dtype=np.float32)
 
         return state

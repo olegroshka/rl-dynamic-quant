@@ -24,7 +24,7 @@ class AdvancedPPOTrainer:
         clip_ratio=0.2,
         lr=1e-3,
         kl_coeff=0.5,
-        entropy_coeff=0.01,
+        entropy_coeff=0.1,
         train_policy_iters=3,
         results_path="results"):
         """
@@ -133,11 +133,11 @@ class AdvancedPPOTrainer:
         return returns, advantages
 
 
-    def compute_returns_and_advantages_v1(self, rollout):
+    def compute_returns_and_advantages_gae(self, rollout):
         return self.compute_gae(rollout)
 
 
-    def compute_returns_and_advantages(self, rollout):
+    def compute_returns_and_advantages_simple(self, rollout):
         """
         Standard returns + advantage = returns - baseline_value.
         """
@@ -184,15 +184,15 @@ class AdvancedPPOTrainer:
         adv_t = (adv_t - adv_t.mean()) / (adv_t.std() + 1e-8)
 
         # old policy
-        #old_policy = copy.deepcopy(self.policy)
-        #old_policy.eval()
+        old_policy = copy.deepcopy(self.policy)
+        old_policy.eval()
 
         # Multiple epochs (train_policy_iters)
         for _ in range(self.train_policy_iters):
             dist = self.policy.action_distribution(states)
             # the old distribution for KL
-            #with torch.no_grad():
-             #   old_dist = old_policy.action_distribution(states)
+            with torch.no_grad():
+                old_dist = old_policy.action_distribution(states)
 
             # PPO objectives
             new_log_probs = dist.log_prob(actions)
@@ -203,10 +203,10 @@ class AdvancedPPOTrainer:
             policy_loss = -torch.mean(torch.min(obj1, obj2))
 
             # KL divergence new vs old
-            #kl_div = torch.distributions.kl_divergence(old_dist, dist).mean()
+            kl_div = torch.distributions.kl_divergence(old_dist, dist).mean()
             # Entropy bonus
-            #entropy = dist.entropy().mean()
-            #policy_loss = policy_loss + self.kl_coeff * kl_div - self.entropy_coeff * entropy
+            entropy = dist.entropy().mean()
+            policy_loss = policy_loss + self.kl_coeff * kl_div - self.entropy_coeff * entropy
 
             self.optimizer.zero_grad()
             policy_loss.backward()
@@ -236,7 +236,7 @@ class AdvancedPPOTrainer:
             chosen_qtypes = ep_info.get("layer_bits", None)
 
             # 1) Returns + advantages
-            returns, advantages = self.compute_returns_and_advantages(rollout)
+            returns, advantages = self.compute_returns_and_advantages_gae(rollout)
 
             # 2) Baseline update
             baseline_loss = self.update_baseline(rollout, returns)
