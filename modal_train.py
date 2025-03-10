@@ -1,5 +1,6 @@
 import pathlib
 import shutil
+from time import sleep
 
 import modal
 import os
@@ -58,7 +59,7 @@ def run_train(
         f"--episodes={episodes}",
         "--finetune_steps=10",
         "--lr=1e-3",
-        "--batch_size=64",
+        "--batch_size=32",
     ]
 
     print("Running command:", " ".join(cmd))
@@ -74,15 +75,16 @@ def main():
       2) After training is done, download the results from the volume to a local folder.
     """
     # 1) Start the remote training run
-    experiment_name = "gpt2-250-gae-v1"    # The name passed above
-    future = run_train.remote(
+    experiment_name = "gpt2-500-gae-sig-ewa-rwd-v3"    # The name passed above
+
+    run_train.remote(
         name=experiment_name,
         model="gpt2",
         dataset="commonsense_qa",
-        episodes=250,
+        episodes=500,
     )
-    # 2) Wait for completion
-    future.result()
+
+    sleep(5)
 
     # 3) Use Modal CLI to download results automatically
     local_dir = f"results/"

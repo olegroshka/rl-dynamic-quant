@@ -169,7 +169,7 @@ class MixedQuantizer:
         # Recursively traverse submodules. If you find nn.Linear or Conv1D, replace it.
         for name, child in module.named_children():
             if isinstance(child, (nn.Linear, Conv1D)):
-                logger.info(f"Quantizing layer {name} with type {quant_type}")
+                logger.debug(f"Quantizing layer {name} with type {quant_type}")
                 new_mod = self.quantizer.quantize_linear_layer(child, quant_type)
                 setattr(module, name, new_mod)
             else:

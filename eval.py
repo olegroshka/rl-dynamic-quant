@@ -7,6 +7,8 @@ import logging
 import time
 import torch
 
+AUTOCAST_TYPE = torch.float32
+
 from transformers import GPT2LMHeadModel, GPT2Tokenizer, AutoModelForCausalLM
 from data_handler import DataHandler
 from datasets import load_dataset
@@ -44,8 +46,10 @@ def evaluate_perplexity(model, data_loader, device="cuda"):
                 # Fallback: label = input_ids
                 labels = input_ids
 
-            outputs = model(input_ids, attention_mask=attention_mask, labels=labels)
-            loss = outputs.loss
+            with torch.amp.autocast('cuda', dtype=AUTOCAST_TYPE):
+                outputs = model(input_ids, attention_mask=attention_mask, labels=labels)
+                loss = outputs.loss
+
             batch_tokens = (labels != -100).sum().item()  # count real tokens
             if batch_tokens == 0:
                 # If the entire prompt is masked, fallback to number of tokens in input_ids
@@ -98,7 +102,9 @@ def evaluate_mc_accuracy(model, tokenizer, raw_val_data, dataset_name, device="c
                 input_ids = tokenized["input_ids"]
                 attention_mask = tokenized["attention_mask"]
 
-                outputs = model(input_ids, attention_mask=attention_mask, labels=input_ids)
+                with torch.amp.autocast('cuda', dtype=AUTOCAST_TYPE):
+                    outputs = model(input_ids, attention_mask=attention_mask, labels=input_ids)
+
                 # outputs.loss is average cross-entropy across all tokens
                 # Lower loss => higher probability
                 choice_logprobs.append(-outputs.loss.item())
@@ -132,7 +138,8 @@ def measure_inference_throughput(model, tokenizer, device="cuda", seq_len=32, n_
     start_time = time.time()
     with torch.no_grad():
         for _ in range(n_trials):
-            _ = model(input_ids, attention_mask=attention_mask)
+            with torch.amp.autocast('cuda', dtype=AUTOCAST_TYPE):
+                _ = model(input_ids, attention_mask=attention_mask)
     end_time = time.time()
 
     elapsed = end_time - start_time
@@ -190,19 +197,18 @@ def main():
 
     # 3. Evaluate perplexity on the tokenized data
     ppl = evaluate_perplexity(model, val_loader, device)
-    print(f"[{args.dataset}] Validation Perplexity: {ppl:.3f}")
+    print(f"[{args.dataset}] Validation Perplexity: {ppl:.8f}")
 
     # 4. Multiple-choice accuracy: need original raw validation data
     raw_dataset = load_dataset(args.dataset)
     raw_val_data = raw_dataset["validation"]
     mc_accuracy = evaluate_mc_accuracy(model, tokenizer, raw_val_data, args.dataset, device)
-    print(f"[{args.dataset}] Multiple-choice Accuracy: {mc_accuracy*100:.2f}%")
+    print(f"[{args.dataset}] Multiple-choice Accuracy: {mc_accuracy*100:.8f}%")
 
     # 5. (Optional) Measure throughput / memory usage
-    tps, mem_mb = measure_inference_throughput(model, tokenizer, device,
-                                               seq_len=32, n_trials=10, batch_size=args.batch_size)
-    print(f"Inference speed: {tps:.2f} tokens/s at batch_size={args.batch_size}, seq_len=32")
-    print(f"Peak GPU memory used: {mem_mb:.2f} MB")
+    tps, mem_mb = measure_inference_throughput(model, tokenizer, device, seq_len=32, n_trials=10, batch_size=args.batch_size)
+    print(f"Inference speed: {tps:.8f} tokens/s at batch_size={args.batch_size}, seq_len=32")
+    print(f"Peak GPU memory used: {mem_mb:.8f} MB")
 
 if __name__ == "__main__":
     main()

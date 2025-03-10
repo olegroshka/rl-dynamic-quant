@@ -86,7 +86,8 @@ class EnhancedQuantizationEnv:
         device: torch.device = None,
         reward_weights: Optional[Dict] = None,
         finetune_steps: int = 5,
-        lr: float = 5e-5
+        lr: float = 5e-5,
+        ema_alpha: float = 0.9  # EMA alpha hyperparam
     ):
         """
         Args:
@@ -109,6 +110,17 @@ class EnhancedQuantizationEnv:
         self.val_loader = val_loader
         self.finetune_steps = finetune_steps
         self.lr = lr
+
+        # ### EMA ###
+        # We'll store separate EMAs for each reward component so you can inspect them if desired.
+        self.ema_alpha = ema_alpha
+        self.ema_initialized = False  # Will become True after the first reward is computed
+
+        self.smoothed_perf_reward = 0.0
+        self.smoothed_kl_reward = 0.0
+        self.smoothed_entropy_reward = 0.0
+        self.smoothed_memory_reward = 0.0
+        self.smoothed_total_reward = 0.0
 
         # Track the current/previous losses and perplexities to build better states
         self.current_loss = 0.0
@@ -507,18 +519,18 @@ class EnhancedQuantizationEnv:
         # 2) Performance reward using perplexity
         # Option A: difference in perplexities
         #   (the sign is negative if quant ppl is higher => negative reward)
-        perf_diff_ppl = ref_ppl - quant_ppl
-        perf_reward = perf_diff_ppl * self.reward_weights.get('performance', 1.0)
+        # perf_diff_ppl = ref_ppl - quant_ppl
+        # perf_reward = perf_diff_ppl * self.reward_weights.get('performance', 1.0)
 
         # TODO: try Option B: ratio-based term
         #   ratio < 1 => quant is better => positive reward
         #   ratio > 1 => quant is worse => negative reward
-        #ratio = quant_ppl / (ref_ppl + 1e-8)
-        #perf_reward = (1.0 - ratio) * self.reward_weights.get('performance', 1.0)
+        # ratio = quant_ppl / (ref_ppl + 1e-8)
+        # perf_reward = (1.0 - ratio) * self.reward_weights.get('performance', 1.0)
 
-        #perf_reward_raw = perplexity_sigmoid_reward(ref_ppl, quant_ppl, alpha=1.0)
-        # Optionally scale it with self.reward_weights
-        #perf_reward = perf_reward_raw * self.reward_weights.get('performance', 1.0)
+        # Option C: Sigmoid-based reward
+        perf_reward_raw = perplexity_sigmoid_reward(ref_ppl, quant_ppl, alpha=1.0)
+        perf_reward = perf_reward_raw * self.reward_weights.get('performance', 1.0)
 
         # ------------------------------------------------------------------------
         # 2) KL Divergence from reference model
@@ -561,17 +573,45 @@ class EnhancedQuantizationEnv:
         # ------------------------------------------------------------------------
         total_reward = perf_reward + kl_reward + entropy_reward + memory_reward
 
+        # (2) ### EMA LOGIC ###
+        if not self.ema_initialized:
+            # Initialize the EMA buffers on the first call
+            self.smoothed_perf_reward = perf_reward
+            self.smoothed_kl_reward = kl_reward
+            self.smoothed_entropy_reward = entropy_reward
+            self.smoothed_memory_reward = memory_reward
+            self.smoothed_total_reward = total_reward
+            self.ema_initialized = True
+        else:
+            alpha = self.ema_alpha
+
+            self.smoothed_perf_reward = alpha * self.smoothed_perf_reward + (1 - alpha) * perf_reward
+            self.smoothed_kl_reward = alpha * self.smoothed_kl_reward + (1 - alpha) * kl_reward
+            self.smoothed_entropy_reward = alpha * self.smoothed_entropy_reward + (1 - alpha) * entropy_reward
+            self.smoothed_memory_reward = alpha * self.smoothed_memory_reward + (1 - alpha) * memory_reward
+            self.smoothed_total_reward = alpha * self.smoothed_total_reward + (1 - alpha) * total_reward
+
+        # (3) Use the smoothed total reward for the RL update
+        final_reward = self.smoothed_total_reward
+
         reward_info = {
             'perf_reward': perf_reward,
             'kl_reward': kl_reward,
             'entropy_reward': entropy_reward,
             'memory_reward': memory_reward,
-            'total_reward': total_reward
+            'total_reward': total_reward,
+            # EMA versions
+            'perf_reward_ema': self.smoothed_perf_reward,
+            'kl_reward_ema': self.smoothed_kl_reward,
+            'entropy_reward_ema': self.smoothed_entropy_reward,
+            'memory_reward_ema': self.smoothed_memory_reward,
+            'total_reward_ema': self.smoothed_total_reward
         }
 
         logger.info(f"Layer {layer_idx}: Reward {reward_info}")
 
-        return total_reward, reward_info
+        return final_reward, reward_info # we use EMAs for the RL update here
+        #return total_reward, reward_info
 
     def _compute_kl_divergence(self, quant_model: nn.Module, ref_model: nn.Module) -> float:
         """
@@ -652,6 +692,9 @@ class EnhancedQuantizationEnv:
             self.quant_ppl_diff,  # change in perplexity from previous step
             self.loss_diff,  # change in loss from previous step
             prev_qtype_size / 16.0,  # previous layer's quant type
+            # EMA versions of rewards
+            self.smoothed_total_reward,
+            self.smoothed_perf_reward,
         ], dtype=np.float32)
 
         return state

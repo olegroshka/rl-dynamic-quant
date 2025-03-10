@@ -31,8 +31,8 @@ def main():
     parser.add_argument("--rl_algorithm", type=str, default="ppo", choices=["ppo"], help="RL algorithm (default: ppo)")
     parser.add_argument("--batch_size", type=int, default=16, help="Batch size for training (default: 16)")
     parser.add_argument("--episodes", type=int, default=10, help="Number of RL episodes (default: 10)")
-    parser.add_argument("--state_dim", type=int, default=10, help="State dimension for policy network (default: 10)")
-    parser.add_argument("--hidden_dim", type=int, default=64, help="Hidden dimension for policy network (default: 64)")
+    parser.add_argument("--state_dim", type=int, default=12, help="State dimension for policy network (default: 12)")
+    parser.add_argument("--hidden_dim", type=int, default=64, help="Hidden dimension for policy network (default: 128)")
     parser.add_argument("--gamma", type=float, default=0.99, help="Discount factor (default: 0.99)")
     parser.add_argument("--clip_ratio", type=float, default=0.2, help="PPO clipping parameter (default: 0.2)")
     parser.add_argument("--lr", type=float, default=1e-3, help="Learning rate for policy network (default: 1e-3)")
@@ -80,7 +80,7 @@ def main():
         'performance': 6.0, #1.0,
         'kl': 0.1,
         'entropy': 0.05,
-        'memory': 2.5#0.5 #2.5,  # 0.2, #0.3, #0.85, #1.0
+        'memory': 4.0#0.5 #2.5,  # 0.2, #0.3, #0.85, #1.0
     }
 
     env = EnhancedQuantizationEnv(
