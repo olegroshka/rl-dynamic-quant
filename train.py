@@ -80,7 +80,7 @@ def main():
         'performance': 6.0, #1.0,
         'kl': 0.1,
         'entropy': 0.05,
-        'memory': 4.0#0.5 #2.5,  # 0.2, #0.3, #0.85, #1.0
+        'memory': 10.0#0.5 #2.5,  # 0.2, #0.3, #0.85, #1.0
     }
 
     env = EnhancedQuantizationEnv(

@@ -7,6 +7,17 @@ import logging
 import time
 import torch
 
+MAX_LENGTH_MAP = {
+        "commonsense_qa": 128,
+        "boolq": 256,
+        "openbookqa": 256,
+        "piqa": 128
+}
+
+N_LABELS = 100
+
+USE_ENTIRE_SEQUENCE_FOR_PPL = True
+
 AUTOCAST_TYPE = torch.float32
 
 from transformers import GPT2LMHeadModel, GPT2Tokenizer, AutoModelForCausalLM
@@ -40,17 +51,16 @@ def evaluate_perplexity(model, data_loader, device="cuda"):
             # Some DataHandler code sets 'labels' to only cover the answer portion
             # For perplexity, we can either use that or the entire input_ids as labels
             # If 'labels' is in batch, we use it:
-            if "labels" in batch:
-                labels = batch["labels"].to(device)
+            if USE_ENTIRE_SEQUENCE_FOR_PPL:
+                labels = input_ids  # measure perplexity on full sequence
             else:
-                # Fallback: label = input_ids
-                labels = input_ids
+                labels = batch["labels"] if "labels" in batch else input_ids
 
             with torch.amp.autocast('cuda', dtype=AUTOCAST_TYPE):
                 outputs = model(input_ids, attention_mask=attention_mask, labels=labels)
                 loss = outputs.loss
 
-            batch_tokens = (labels != -100).sum().item()  # count real tokens
+            batch_tokens = (labels != -N_LABELS).sum().item()  # count real tokens
             if batch_tokens == 0:
                 # If the entire prompt is masked, fallback to number of tokens in input_ids
                 batch_tokens = input_ids.numel()
@@ -66,6 +76,120 @@ def evaluate_perplexity(model, data_loader, device="cuda"):
     return perplexity.item()
 
 def evaluate_mc_accuracy(model, tokenizer, raw_val_data, dataset_name, device="cuda"):
+    """
+    Multiple-choice accuracy for:
+      - CommonsenseQA
+      - OpenBookQA
+      - BoolQ (treated as 2-choice: Yes/No)
+      - PIQA (2-choice: sol1, sol2)
+
+    We'll compute a negative cross-entropy (log-prob) for each choice,
+    then pick whichever choice has the highest log-prob (lowest XEnt).
+    """
+    model.eval()
+    correct = 0
+    total = 0
+
+    with (torch.no_grad()):
+        for ex in raw_val_data:
+            # 1. Gather the question/prompt and the list of choices
+            if dataset_name == "commonsense_qa":
+                question = ex["question"]
+                # e.g. ex["choices"]["text"] -> ["the sun", "a fish", ...]
+                choices_texts = ex["choices"]["text"]
+                # e.g. ex["answerKey"] -> "A"
+                answer_key = ex["answerKey"]
+                gold_index = ord(answer_key) - ord("A")
+
+                # We'll build prompt as: "Question: {q}\nAnswer: {choice}"
+
+            elif dataset_name == "openbookqa":
+                question = ex["question_stem"]
+                choices_texts = ex["choices"]["text"]
+                answer_key = ex["answerKey"]
+                gold_index = ord(answer_key) - ord("A")
+
+                # Prompt: "Question: {question}\nAnswer: {choice}"
+
+            elif dataset_name == "boolq":
+                # BoolQ has: passage, question, answer (bool)
+                passage = ex["passage"]
+                question = ex["question"]
+                answer_bool = ex["answer"]  # True/False
+
+                # We'll do a 2-choice scenario: 0="No", 1="Yes"
+                choices_texts = ["No", "Yes"]
+                gold_index = 1 if answer_bool else 0
+
+                # We'll build prompt:
+                # "Passage: {passage}\nQuestion: {question}\nAnswer: {choice}"
+
+            elif dataset_name == "piqa":
+                # PIQA has: goal, sol1, sol2, label
+                goal = ex["goal"]
+                sol1 = ex["sol1"]
+                sol2 = ex["sol2"]
+                label = ex["label"]   # 0 or 1
+                gold_index = label    # whichever is correct
+                choices_texts = [sol1, sol2]
+
+                # We'll build prompt:
+                # "Goal: {goal}\nSolution: {choice}"
+
+            else:
+                raise ValueError(f"Unsupported dataset: {dataset_name}")
+
+            # 2. For each choice, compute cross-entropy
+            choice_logprobs = []
+            for i, choice_text in enumerate(choices_texts):
+                # Build the prompt differently per dataset
+                if dataset_name == "commonsense_qa":
+                    prompt_text = f"Question: {question}\nAnswer: {choice_text}"
+                elif dataset_name == "openbookqa":
+                    prompt_text = f"Question: {question}\nAnswer: {choice_text}"
+                elif dataset_name == "boolq":
+                    prompt_text = (
+                        f"Passage: {passage}\n"
+                        f"Question: {question}\n"
+                        f"Answer: {choice_text}"
+                    )
+                elif dataset_name == "piqa":
+                    prompt_text = f"Goal: {goal}\nSolution: {choice_text}"
+                else:
+                    raise ValueError(f"Unsupported dataset: {dataset_name}")
+
+                # Tokenize
+                tokenized = tokenizer(
+                    prompt_text,
+                    return_tensors="pt",
+                    truncation=True,
+                    max_length=MAX_LENGTH_MAP[dataset_name],
+                    padding="max_length"
+                ).to(device)
+                input_ids = tokenized["input_ids"]
+                attention_mask = tokenized["attention_mask"]
+
+                # Compute average cross-entropy
+                with torch.amp.autocast('cuda', dtype=AUTOCAST_TYPE):
+                    outputs = model(input_ids, attention_mask=attention_mask, labels=input_ids)
+
+                # outputs.loss is average CE across all tokens in prompt_text
+                # Lower loss => higher probability
+                avg_ce = outputs.loss.item()
+                choice_logprobs.append(-avg_ce)  # negative => logprob
+
+            # 3. Pick the best choice
+            pred_index = max(range(len(choice_logprobs)), key=lambda i: choice_logprobs[i])
+            if pred_index == gold_index:
+                correct += 1
+            total += 1
+
+    if total == 0:
+        return 0.0
+    return correct / total
+
+
+def evaluate_mc_accuracy_old(model, tokenizer, raw_val_data, dataset_name, device="cuda"):
     """
     Multiple-choice accuracy for CommonsenseQA or OpenBookQA.
     We re-load the *raw* validation data so we can see the original question,
@@ -98,7 +222,13 @@ def evaluate_mc_accuracy(model, tokenizer, raw_val_data, dataset_name, device="c
             choice_logprobs = []
             for choice_text in choices_texts:
                 prompt_text = f"Question: {question}\nAnswer: {choice_text}"
-                tokenized = tokenizer(prompt_text, return_tensors="pt").to(device)
+                tokenized = tokenizer(
+                    prompt_text,
+                    return_tensors="pt",
+                    truncation=True,
+                    max_length=MAX_LENGTH_MAP[dataset_name],
+                    padding="max_length"
+                ).to(device)
                 input_ids = tokenized["input_ids"]
                 attention_mask = tokenized["attention_mask"]
 
@@ -153,8 +283,10 @@ def main():
     parser = argparse.ArgumentParser(description="Evaluation script for GPT2-based models.")
     parser.add_argument("--model_dir", type=str, required=True, help="Path to the directory containing the fine-tuned model (e.g., results/dynamic_qlora_exp).")
     parser.add_argument("--quant_schema", type=str, required=True, help="List of quantization types, e.g. ['fp16','nf4','int8',...] or 4 or 8 for uniform quantization.")
-    parser.add_argument("--dataset", type=str, default="commonsense_qa", help="Which dataset to evaluate on: 'commonsense_qa' or 'openbookqa'")
+    parser.add_argument("--dataset", type=str, default="boolq", help="Which dataset to evaluate on: 'boolq' or 'boolq'")
     parser.add_argument("--batch_size", type=int, default=8, help="Batch size for perplexity evaluation DataLoader.")
+    parser.add_argument("--use_lm_chunking", default=True, action="store_true", help="If set, chunk the dataset for LM-style perplexity.")
+    parser.add_argument("--block_size", type=int, default=16)
     args = parser.parse_args()
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -192,7 +324,13 @@ def main():
         tokenizer.pad_token = tokenizer.eos_token
 
     # 2. Create a DataHandler to get the tokenized val_loader for perplexity
-    data_handler = DataHandler(dataset_name=args.dataset, batch_size=args.batch_size, max_length=128)
+    data_handler = DataHandler(
+        dataset_name=args.dataset,
+        batch_size=args.batch_size,
+        max_length=128,
+        use_lm_chunking=args.use_lm_chunking,
+        block_size=args.block_size
+    )
     _, val_loader = data_handler.load_dataset()
 
     # 3. Evaluate perplexity on the tokenized data
@@ -203,7 +341,7 @@ def main():
     raw_dataset = load_dataset(args.dataset)
     raw_val_data = raw_dataset["validation"]
     mc_accuracy = evaluate_mc_accuracy(model, tokenizer, raw_val_data, args.dataset, device)
-    print(f"[{args.dataset}] Multiple-choice Accuracy: {mc_accuracy*100:.8f}%")
+    print(f"[{args.dataset}] Multiple-choice Accuracy: {mc_accuracy * 100:.8f}%")
 
     # 5. (Optional) Measure throughput / memory usage
     tps, mem_mb = measure_inference_throughput(model, tokenizer, device, seq_len=32, n_trials=10, batch_size=args.batch_size)
