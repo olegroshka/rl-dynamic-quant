@@ -8,3 +8,4 @@ tqdm
 cd
 modal
 wandb
+seaborn
