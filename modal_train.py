@@ -1,13 +1,9 @@
+import os
 import pathlib
-import shutil
+import subprocess
 from time import sleep
 
 import modal
-import os
-import subprocess
-
-from datasets import experimental
-from modal import Client
 
 # 1) Build a base image with your dependencies
 #    Make sure you have a requirements.txt listing everything needed by train.py
