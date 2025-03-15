@@ -131,7 +131,7 @@ class EnhancedQuantizationEnv:
         self.quant_ppl_diff = 0.0
 
         # GPT-2 blocks: a list of transformer layers
-        self.layers = list(self.model.transformer.h)
+        self.layers = self._get_transformer_blocks(self.model)
         self.num_layers = len(self.layers)
         self.layer_idx = 0  # which layer we're working on now
 
@@ -193,37 +193,92 @@ class EnhancedQuantizationEnv:
         entropies = self._compute_attention_entropy_all_layers(model)
 
         stats = []
-        for i, layer in enumerate(model.transformer.h):
+        all_blocks = self._get_transformer_blocks(model)
+        for i, block in enumerate(all_blocks):
             with torch.no_grad():
-                w = layer.attn.c_attn.weight
+                # Attempt to gather a single large attention weight for mean/std
+                w_mean, w_std, grad_norm = self._gather_block_stats(block)
+                # Fallback if no large weight found => just set them to 0
 
-                # Decide whether to dequantize or use regular .mean()/.std()
-                if isinstance(w, bnb.nn.Params4bit) and w.quant_state is not None:
-                    # Dequantize from 4-bit to real float
-                    w_dequant = dequantize_4bit(w.data, w.quant_state)
-                    w_mean = w_dequant.mean().item()
-                    w_std = w_dequant.std().item()
-                else:
-                    # Normal float16/bfloat16/float32 or int8
-                    # At least cast to float to avoid "Byte" or other issues
-                    w_mean = w.float().mean().item()
-                    w_std = w.float().std().item()
-
-                # For gradient norm, we assume w.grad is floating. If no grad, set 0
-                grad_norm = w.grad.norm().item() if (w.grad is not None) else 0.0
+            # If we have fewer attention layers returned than number of blocks,
+            # clamp the index or set 0.0. Usually they match, though.
+            attn_ent = entropies[i] if i < len(entropies) else 0.0
+                #
+                # w = layer.attn.c_attn.weight
+                #
+                # # Decide whether to dequantize or use regular .mean()/.std()
+                # if isinstance(w, bnb.nn.Params4bit) and w.quant_state is not None:
+                #     # Dequantize from 4-bit to real float
+                #     w_dequant = dequantize_4bit(w.data, w.quant_state)
+                #     w_mean = w_dequant.mean().item()
+                #     w_std = w_dequant.std().item()
+                # else:
+                #     # Normal float16/bfloat16/float32 or int8
+                #     # At least cast to float to avoid "Byte" or other issues
+                #     w_mean = w.float().mean().item()
+                #     w_std = w.float().std().item()
+                #
+                # # For gradient norm, we assume w.grad is floating. If no grad, set 0
+                # grad_norm = w.grad.norm().item() if (w.grad is not None) else 0.0
 
             stats.append(
                 LayerStats(
                     weight_mean=w_mean,
                     weight_std=w_std,
                     gradient_norm=grad_norm,
-                    attention_entropy=entropies[i],
+                    attention_entropy=attn_ent,
                     layer_idx=i,
                     current_quant_type=self.layer_stats[i].current_quant_type,
                 )
             )
 
         return stats
+
+    def _gather_block_stats(self, block: nn.Module) -> Tuple[float, float, float]:
+        """
+        Recursively search a block to find the largest nn.Linear/Conv1D/bitsandbytes layer.
+        This approach should work for GPT-2, GPT-NeoX, Qwen, Phi-2, MPT, etc.,
+        as long as they rely on standard or bitsandbytes linear/conv modules
+        within each transformer block.
+
+        Returns:
+            (w_mean, w_std, grad_norm) for whichever module has the largest weight.numel().
+            If nothing found, returns (0.0, 0.0, 0.0).
+        """
+        w_mean, w_std, grad_norm = 0.0, 0.0, 0.0
+
+        largest_linear = None
+        largest_numel = 0
+
+        # named_modules() iterates recursively (including the block itself).
+        for name, sub_module in block.named_modules():
+            # We look for these classes:
+            if isinstance(sub_module, (nn.Linear, Conv1D, bnb.nn.Linear4bit, bnb.nn.Linear8bitLt)):
+                # Check how many weights the submodule has.
+                numel = sub_module.weight.numel()
+                if numel > largest_numel:
+                    largest_linear = sub_module
+                    largest_numel = numel
+
+        if largest_linear is not None:
+            # Gather stats from the largest sub_module
+            w = largest_linear.weight
+
+            # If 4bit data => dequantize for correct mean/std
+            if isinstance(w, bnb.nn.Params4bit) and w.quant_state is not None:
+                w_dequant = dequantize_4bit(w.data, w.quant_state)
+                w_mean = w_dequant.mean().item()
+                w_std = w_dequant.std().item()
+            else:
+                # Normal float/int8/… => just cast to float
+                w_mean = w.float().mean().item()
+                w_std = w.float().std().item()
+
+            # If there's a gradient, measure its norm
+            if w.grad is not None:
+                grad_norm = w.grad.norm().item()
+
+        return (w_mean, w_std, grad_norm)
 
     def _compute_attention_entropy_all_layers(self, model: nn.Module) -> List[float]:
         batch = next(iter(self.train_loader))
@@ -247,6 +302,32 @@ class EnhancedQuantizationEnv:
 
         return all_entropies
 
+    def _get_transformer_blocks(self, model: nn.Module) -> List[nn.Module]:
+        """
+        Attempts to find a list of the main Transformer blocks (decoder blocks).
+        This should work for GPT-2, many GPT-like models, Llama, Qwen, etc.
+        """
+        # Check if it's GPT-2 style
+        if hasattr(model, "transformer") and hasattr(model.transformer, "h"):
+            return list(model.transformer.h)
+
+        # Check if it’s a LLaMA or GPTNeoX style (e.g. "model.layers")
+        if hasattr(model, "model") and hasattr(model.model, "layers"):
+            return list(model.model.layers)
+
+        # Check if it’s an MPT style (mosaicML) => model.transformer.blocks
+        if hasattr(model, "transformer") and hasattr(model.transformer, "blocks"):
+            return list(model.transformer.blocks)
+
+        # Fallback: look for the largest submodule that is a list of blocks
+        # This is very naive; for Qwen or Phi-2, you may need a custom rule:
+        if hasattr(model, "blocks"):
+            return list(model.blocks)
+
+        raise ValueError("Could not automatically find a list of transformer blocks. "
+                         "Please adapt _get_transformer_blocks to your model architecture.")
+
+
     def reset(self):
         """
         Start new episode:
@@ -261,7 +342,7 @@ class EnhancedQuantizationEnv:
         #self.prev_loss = self.evaluate_loss(self.model)
 
         # Refresh the 'self.layers' to point at the new model's blocks
-        self.layers = list(self.model.transformer.h)
+        self.layers = self._get_transformer_blocks(self.model)
         self.num_layers = len(self.layers)
         self.layer_idx = 0
 
@@ -374,7 +455,7 @@ class EnhancedQuantizationEnv:
         self.last_quant_loss = quant_loss
         self.last_quant_ppl = quant_ppl
         self.current_loss = quant_loss
-        self.loss_diff = ref_loss - quant_loss
+        #self.loss_diff = ref_loss - quant_loss
         self.current_quant_ppl = quant_ppl
         self.quant_ppl_diff = ref_ppl - quant_ppl
 
@@ -407,6 +488,21 @@ class EnhancedQuantizationEnv:
 
 
     def _quantize_layer(self, layer: nn.Module, quant_type: str):
+        """
+        Do a recursive search for linear or Conv1D modules
+        and quantize them.
+        """
+        for name, child in layer.named_children():
+            # If child is a linear layer, quantize
+            if (isinstance(child, (nn.Linear, Conv1D)) or
+                    isinstance(child, (bnb.nn.Linear4bit, bnb.nn.Linear8bitLt))):
+                new_mod = self.quantizer.quantize_linear_layer(child, quant_type)
+                setattr(layer, name, new_mod)
+            else:
+                # Recursively quantize submodules
+                self._quantize_layer(child, quant_type)
+
+    def _quantize_layer_old(self, layer: nn.Module, quant_type: str):
         for name, child in layer.named_children():
             # skip if it is already quantized
             if isinstance(child, (bnb.nn.Linear8bitLt, bnb.nn.Linear4bit)):
@@ -519,8 +615,8 @@ class EnhancedQuantizationEnv:
         # 2) Performance reward using perplexity
         # Option A: difference in perplexities
         #   (the sign is negative if quant ppl is higher => negative reward)
-        # perf_diff_ppl = ref_ppl - quant_ppl
-        # perf_reward = perf_diff_ppl * self.reward_weights.get('performance', 1.0)
+        perf_diff_ppl = ref_ppl - quant_ppl
+        perf_reward = perf_diff_ppl * self.reward_weights.get('performance', 1.0)
 
         # TODO: try Option B: ratio-based term
         #   ratio < 1 => quant is better => positive reward
@@ -529,8 +625,8 @@ class EnhancedQuantizationEnv:
         # perf_reward = (1.0 - ratio) * self.reward_weights.get('performance', 1.0)
 
         # Option C: Sigmoid-based reward
-        perf_reward_raw = perplexity_sigmoid_reward(ref_ppl, quant_ppl, alpha=1.0)
-        perf_reward = perf_reward_raw * self.reward_weights.get('performance', 1.0)
+        # perf_reward_raw = perplexity_sigmoid_reward(ref_ppl, quant_ppl, alpha=1.0)
+        # perf_reward = perf_reward_raw * self.reward_weights.get('performance', 1.0)
 
         # ------------------------------------------------------------------------
         # 2) KL Divergence from reference model
@@ -592,7 +688,9 @@ class EnhancedQuantizationEnv:
             self.smoothed_total_reward = alpha * self.smoothed_total_reward + (1 - alpha) * total_reward
 
         # (3) Use the smoothed total reward for the RL update
-        final_reward = self.smoothed_total_reward
+        #final_reward = self.smoothed_total_reward
+        # (3) Or maybe don't use the smoothed total reward for the RL update
+        final_reward = total_reward
 
         reward_info = {
             'perf_reward': perf_reward,
@@ -718,19 +816,34 @@ class EnhancedQuantizationEnv:
 
     def _compute_memory_savings(self) -> float:
         """
-        Rough calculation of memory saved vs. the 16-bit or 32-bit baseline.
-        For a simplistic example, assume the reference is 16-bit for all layers.
-        """
-        baseline_bits = 16
-        # sum param sizes * chosen_bits and compare
-        total_params = 0
-        quantized_params = 0
-        for i, layer in enumerate(self.layers):
-            w = layer.attn.c_attn.weight
-            num_params = w.numel()
-            chosen_bits = Q_TYPE_SIZE.get(self.layer_stats[i].current_quant_type, baseline_bits)
-            quantized_params += num_params * chosen_bits
-            total_params += num_params * baseline_bits
+        Rough calculation of memory saved vs. a 16-bit baseline (or 32-bit, if you prefer).
+        We'll assume each layer is assigned a single quant type for all its parameters.
 
-        saved = (total_params - quantized_params) / total_params
-        return saved
+        Returns:
+            A fraction in [0,1] representing how much memory we've saved compared to
+            the baseline bits (e.g., 16 bits).
+        """
+        baseline_bits = 16  # or 32
+
+        total_params_bits = 0
+        quantized_params_bits = 0
+
+        for i, block in enumerate(self.layers):
+            # how many parameters are in this entire block
+            num_params = self.layer_param_counts[i]
+
+            # which quant type did we end up using for block i?
+            chosen_qtype = self.layer_stats[i].current_quant_type
+            chosen_bits = Q_TYPE_SIZE.get(chosen_qtype, baseline_bits)
+
+            # Add up the bits used for that block
+            quantized_params_bits += num_params * chosen_bits
+            # Add up the bits for baseline
+            total_params_bits += num_params * baseline_bits
+
+        # compute fraction saved
+        if total_params_bits == 0:
+            return 0.0
+        saved_fraction = (total_params_bits - quantized_params_bits) / total_params_bits
+        return saved_fraction
+

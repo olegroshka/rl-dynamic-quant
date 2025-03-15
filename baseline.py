@@ -5,7 +5,7 @@ import os
 
 import torch
 from tqdm import tqdm
-from transformers import GPT2Tokenizer, GPT2LMHeadModel
+from transformers import AutoTokenizer, AutoModelForCausalLM
 
 from data_handler import DataHandler
 
@@ -19,22 +19,24 @@ logger = logging.getLogger(__name__)
 
 
 class ModelCreator:
-    def __init__(self, model_name="gpt2", bit_width=8, device=None):
+    def __init__(self, model_name="gpt2", bit_width=8, device=None, trust_remote_code=True):
         self.model_name = model_name
         self.device = device if device else torch.device("cuda" if torch.cuda.is_available() else "cpu")
         logger.info(f"Using device: {self.device}")
 
         # Load model and tokenizer
-        self.tokenizer = GPT2Tokenizer.from_pretrained(model_name)
-        if self.tokenizer.pad_token is None:
-            self.tokenizer.pad_token = self.tokenizer.eos_token
-        self.model = GPT2LMHeadModel.from_pretrained(model_name)
-        # model_8bit = AutoModelForCausalLM.from_pretrained(
-        #     "gpt2",
-        #     load_in_4bit=bit_width == 4,  # This triggers 4-bit weights
-        #     load_in_8bit=bit_width == 8,  # This triggers 8-bit weights
-        #     device_map="auto",  # Places modules automatically
-        # )
+        tokenizer = AutoTokenizer.from_pretrained(
+            model_name,
+            trust_remote_code=trust_remote_code
+        )
+        # Some models do not have a pad_token by default (similar to GPT2).
+        if tokenizer.pad_token is None:
+            tokenizer.pad_token = tokenizer.eos_token
+
+        self.model = AutoModelForCausalLM.from_pretrained(
+            model_name,
+            trust_remote_code=trust_remote_code
+        )
 
         self.model.to(self.device)
 
@@ -129,6 +131,7 @@ def main():
     parser.add_argument("--batch_size", type=int, default=8, help="Batch size for training (default: 8)")
     parser.add_argument("--epochs", type=int, default=3, help="Number of fine-tuning epochs (default: 3)")
     parser.add_argument("--learning_rate", type=float, default=5e-5, help="Learning rate (default: 5e-5)")
+    parser.add_argument("--trust_remote_code", action="store_true", help="Set this flag if your model requires custom code (e.g., Qwen, Phi-2).")
 
     args = parser.parse_args()
 
@@ -138,7 +141,7 @@ def main():
         logger.warning(f"Output directory {output_dir} already exists. Files may be overwritten.")
 
     # Create and configure the model
-    creator = ModelCreator(model_name=args.model, bit_width=args.bit_width)
+    creator = ModelCreator(model_name=args.model, bit_width=args.bit_width, trust_remote_code=args.trust_remote_code)
 
     # Load dataset
     data_handler = DataHandler(dataset_name=args.dataset, batch_size=args.batch_size, max_length=128)

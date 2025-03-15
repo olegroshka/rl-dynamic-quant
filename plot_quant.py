@@ -184,46 +184,50 @@ def plot_layer_distribution_bar(quant_matrix, out_path, experiment_name, palette
     print(f"Saved distribution bar chart to: {out_path}")
 
 
-def plot_4_reward_components(data, out_path, experiment_name):
+def plot_reward_components(data, out_path, experiment_name):
     """
-    Plot 4 main reward components (perf, kl, memory, total) + their EMA lines
-    in a 2x2 grid of subplots. Each subplot uses its own scale.
+    Plot 5 main reward components (perf, kl, memory, entropy, total) + their EMA lines
+    in a 3x2 grid of subplots (5 used, 1 left empty).
+    Each subplot uses its own y-scale.
     """
+    import matplotlib.pyplot as plt
+    import seaborn as sns
+
     sns.set(style="whitegrid")
 
-    # Gather all reward components in a dict
+    # 1) Collect all possible reward keys
     all_keys = set()
     for ep in data:
         if "reward_components" in ep:
             all_keys.update(ep["reward_components"].keys())
     rc_values = {k: [] for k in all_keys}
 
-    # Fill arrays
+    # 2) Populate arrays from data
     for ep in data:
         rwd = ep.get("reward_components", {})
         for k in all_keys:
             rc_values[k].append(rwd.get(k, None))
 
-    # We define four main pairs: (main_key, ema_key, subplot_title)
-    # Adjust if you have different naming or if you want 'entropy_reward' included.
+    # 3) Define our 5 main pairs: (raw_key, ema_key, descriptive_title)
     component_pairs = [
         ("perf_reward",    "perf_reward_ema",    "Performance Reward"),
         ("kl_reward",      "kl_reward_ema",      "KL Reward"),
         ("memory_reward",  "memory_reward_ema",  "Memory Reward"),
+        ("entropy_reward", "entropy_reward_ema", "Entropy Reward"),
         ("total_reward",   "total_reward_ema",   "Total Reward")
     ]
 
-    fig, axs = plt.subplots(nrows=2, ncols=2, figsize=(12, 8), sharex=True)
-    axs = axs.flatten()
+    # 4) Create a 3x2 grid => 6 subplots, but we only need 5. We'll leave the 6th blank.
+    fig, axs = plt.subplots(nrows=3, ncols=2, figsize=(12, 10), sharex=True)
+    axs = axs.flatten()  # So we can index them easily
 
     for i, (main_k, ema_k, title_str) in enumerate(component_pairs):
         ax = axs[i]
 
-        # If a key doesn't exist in the data, skip or just plot an empty line
-        main_vals = rc_values[main_k] if main_k in rc_values else []
-        ema_vals  = rc_values[ema_k]  if ema_k in rc_values else []
+        main_vals = rc_values.get(main_k, [])
+        ema_vals  = rc_values.get(ema_k,  [])
 
-        # Plot them if we have data
+        # Plot if we have data
         if main_vals:
             ax.plot(main_vals, label=main_k)
         if ema_vals:
@@ -231,16 +235,21 @@ def plot_4_reward_components(data, out_path, experiment_name):
 
         ax.set_title(f"{title_str} — {experiment_name}")
         ax.set_ylabel("Reward Value")
-        ax.legend(loc="best")  # or bbox_to_anchor if you prefer
+        ax.legend(loc="best")
 
-    # X label on the bottom row
-    for ax in axs[2:]:
+    # 5) If there's a 6th subplot we don't use, optionally label it "Unused" or hide it
+    if len(axs) > 5:
+        axs[5].axis("off")
+        axs[5].set_title("")
+
+    # 6) Common X label for bottom row subplots
+    for ax in axs[4:]:
         ax.set_xlabel("Episode Index")
 
     plt.tight_layout()
     plt.savefig(out_path, dpi=200)
     plt.close()
-    print(f"Saved 4-subplot reward plot to: {out_path}")
+    print(f"Saved 5-subplot reward plot to: {out_path}")
 
 
 def plot_layer_stats_distributions(data, out_dir, experiment_name):
@@ -326,8 +335,8 @@ def main():
     plot_layer_distribution_bar(quant_matrix, out_path_dist, experiment_name, palette=PALETTE)
 
     # 5) New 2x2 subplots for the four main reward components
-    out_path_4sub = os.path.join(out_dir, f"{experiment_name}_reward_4subplots.png")
-    plot_4_reward_components(data, out_path_4sub, experiment_name)
+    out_path_4sub = os.path.join(out_dir, f"{experiment_name}_reward_subplots.png")
+    plot_reward_components(data, out_path_4sub, experiment_name)
 
     # 6) Layer stats distributions
     plot_layer_stats_distributions(data, out_dir, experiment_name)

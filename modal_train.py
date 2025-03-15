@@ -53,9 +53,9 @@ def run_train(
         f"--model={model}",
         f"--dataset={dataset}",
         f"--episodes={episodes}",
-        "--finetune_steps=30",
+        "--finetune_steps=5",
         "--lr=1e-3",
-        "--batch_size=32",
+        "--batch_size=16",
     ]
 
     print("Running command:", " ".join(cmd))
@@ -71,13 +71,13 @@ def main():
       2) After training is done, download the results from the volume to a local folder.
     """
     # 1) Start the remote training run
-    experiment_name = "gpt2-250-gae-sig-ewa-rwd-v6"    # The name passed above
+    experiment_name = "QwenR1-250-gae-ewa-rwd-v1"    # The name passed above
 
     run_train.remote(
         name=experiment_name,
-        model="gpt2",
+        model="deepseek-ai/DeepSeek-R1-Distill-Qwen-1.5B",
         dataset="commonsense_qa",
-        episodes=250,
+        episodes=500,
     )
 
     sleep(5)

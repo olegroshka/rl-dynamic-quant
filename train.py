@@ -5,7 +5,7 @@ import logging
 import os
 
 import torch
-from transformers import GPT2LMHeadModel, GPT2Tokenizer
+from transformers import GPT2LMHeadModel, GPT2Tokenizer, AutoTokenizer, AutoModelForCausalLM
 import wandb
 
 from advanced_ppo_trainer import AdvancedPPOTrainer
@@ -32,13 +32,14 @@ def main():
     parser.add_argument("--batch_size", type=int, default=16, help="Batch size for training (default: 16)")
     parser.add_argument("--episodes", type=int, default=10, help="Number of RL episodes (default: 10)")
     parser.add_argument("--state_dim", type=int, default=12, help="State dimension for policy network (default: 12)")
-    parser.add_argument("--hidden_dim", type=int, default=64, help="Hidden dimension for policy network (default: 128)")
+    parser.add_argument("--hidden_dim", type=int, default=256, help="Hidden dimension for policy network (default: 256)")
     parser.add_argument("--gamma", type=float, default=0.99, help="Discount factor (default: 0.99)")
     parser.add_argument("--clip_ratio", type=float, default=0.2, help="PPO clipping parameter (default: 0.2)")
     parser.add_argument("--lr", type=float, default=1e-3, help="Learning rate for policy network (default: 1e-3)")
     parser.add_argument("--finetune_steps", type=int, default=5, help="Number of fine-tuning steps per layer (default: 5)")
     parser.add_argument("--quant_types", type=str, default="nf4,fp4,int8,fp16", help="Supported quantization types: nf4, fp4, int8, fp16, bf16, fp32")
     parser.add_argument("--reference_model_dir", type=str, default=None, help="Directory for the fine-tuned reference model")
+    parser.add_argument("--trust_remote_code", action="store_true", help="Set this flag if your model requires custom code (e.g., Qwen, Phi-2).")
 
     args = parser.parse_args()
 
@@ -49,26 +50,33 @@ def main():
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     logger.info(f"Using device: {device}")
 
-    tokenizer = GPT2Tokenizer.from_pretrained(
+    tokenizer = AutoTokenizer.from_pretrained(
         args.model,
-        #force_download=True,
-        local_files_only=False)
-
-    tokenizer.pad_token = tokenizer.eos_token
+        trust_remote_code=args.trust_remote_code
+    )
+    # Some models do not have a pad_token by default (similar to GPT2).
+    if tokenizer.pad_token is None:
+        tokenizer.pad_token = tokenizer.eos_token
 
     wandb.init(project="DynaQ")  # Initialize wandb
 
-    model = GPT2LMHeadModel.from_pretrained(
+    model = AutoModelForCausalLM.from_pretrained(
         args.model,
-        #force_download=True,
-        local_files_only=False).to(device)
+        trust_remote_code=args.trust_remote_code
+    ).to(device)
     model.to(torch.float32)
 
+    # If a reference model is provided, load it; otherwise, just duplicate the same model
     if args.reference_model_dir is not None:
-        reference_model = GPT2LMHeadModel.from_pretrained(args.reference_model_dir).to(device)
+        reference_model = AutoModelForCausalLM.from_pretrained(
+            args.reference_model_dir,
+            trust_remote_code=args.trust_remote_code
+        ).to(device)
     else:
-        reference_model = GPT2LMHeadModel.from_pretrained(args.model).to(device) #we start with the same model
-
+        reference_model = AutoModelForCausalLM.from_pretrained(
+            args.model,
+            trust_remote_code=args.trust_remote_code
+        ).to(device)
     reference_model.to(torch.float32)
 
     data_handler = DataHandler(dataset_name=args.dataset, batch_size=args.batch_size, max_length=128)
@@ -77,10 +85,10 @@ def main():
     quantizer = Quantizer(compute_dtype=torch.float16, target_device=device)
 
     reward_weights = {
-        'performance': 6.0, #1.0,
-        'kl': 0.1,
+        'performance': 8.0, #1.0,
+        'kl': 10.0,#0.1,
         'entropy': 0.05,
-        'memory': 10.0#0.5 #2.5,  # 0.2, #0.3, #0.85, #1.0
+        'memory': 5.0#0.5 #2.5,  # 0.2, #0.3, #0.85, #1.0
     }
 
     env = EnhancedQuantizationEnv(
