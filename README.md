@@ -85,16 +85,27 @@ Below is a high-level workflow. Adapt the file names/commands to your actual cod
      ```
    - The script might fine-tune the model after each layer’s quantization, compare it against a reference copy, then compute the reward.
 
-2. **Evaluate Quantized Model**  
+2. **Create Base Line**  
+   - Create a baseline model (e.g., full-precision FP32 or FP16) to compare against the quantized versions. 
+     ```bash
+     python baseline.py \
+       --name gpt-2-baseline \
+       --model gpt2 \
+       --dataset commonsencse_qa \
+       --epochs 5 
+         ```
+
+3. **Evaluate Quantized Model**  
    - After training, the learned policy yields a *mixed-precision schedule*. You can apply that schedule to a fresh LLM and do a final fine-tuning pass to confirm performance.
    - Evaluate perplexity, accuracy, and memory usage on test sets like **BoolQ** or **PIQA**:
      ```bash
      python eval.py \
-       --model gpt2 \
+       --model_dir results/gpt-2-baseline \
        --dataset piqa \
        --quant_schema "['int8', 'int8', 'nf4', 'nf4', 'nf4', 'nf4', 'fp4', 'nf4', 'fp4', 'nf4', 'fp4', 'fp4']"
      ```
-3. **Compare to Uniform Quantization**  
+
+4. **Compare to Uniform Quantization**  
    - For comparison, you can uniformly quantize all layers (e.g., all int8, all nf4) and measure perplexity/accuracy in the same manner.
 
 ---
