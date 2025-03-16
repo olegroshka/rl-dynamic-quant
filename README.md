@@ -75,7 +75,7 @@ Below is a high-level workflow. Adapt the file names/commands to your actual cod
    - The agent interacts with a custom RL environment in which **each step** corresponds to quantizing a single layer of the LLM, followed by short fine-tuning to measure updated performance.
    - Example (placeholder) command:
      ```bash
-     python dynaquant.py \
+     python train.py \
        --model gpt2 \
        --dataset commonsenseqa \
        --num-episodes 100 \
@@ -90,11 +90,10 @@ Below is a high-level workflow. Adapt the file names/commands to your actual cod
    - Evaluate perplexity, accuracy, and memory usage on test sets like **BoolQ** or **PIQA**:
      ```bash
      python eval.py \
-       --model gpt2-small \
-       --quant-schedule /path/to/saved_policy.json \
-       --eval-dataset piqa
+       --model gpt2 \
+       --dataset piqa \
+       --quant_schema "['int8', 'int8', 'nf4', 'nf4', 'nf4', 'nf4', 'fp4', 'nf4', 'fp4', 'nf4', 'fp4', 'fp4']"
      ```
-
 3. **Compare to Uniform Quantization**  
    - For comparison, you can uniformly quantize all layers (e.g., all int8, all nf4) and measure perplexity/accuracy in the same manner.
 
