@@ -1,6 +1,5 @@
 import copy
 import logging
-import math
 from dataclasses import dataclass
 from typing import List, Dict, Optional, Tuple
 
@@ -65,7 +64,7 @@ def perplexity(val_loss):
     return float(torch.exp(torch.tensor(val_loss))) if val_loss < 20 else float('inf')
 
 
-class EnhancedQuantizationEnv:
+class QuantizationEnv:
     """
     Enhanced RL Environment that:
       - Holds a GPT-2-like model

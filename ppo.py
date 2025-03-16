@@ -1,4 +1,4 @@
-# advanced_ppo_trainer.py
+# ppo.py
 import copy
 from collections import namedtuple
 
@@ -12,7 +12,7 @@ device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 RolloutStep = namedtuple("RolloutStep", ["state", "action", "reward", "value", "log_prob", "done"])
 
-class AdvancedPPOTrainer:
+class PPOTrainer:
     def __init__(
         self,
         env,

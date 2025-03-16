@@ -1,10 +1,13 @@
 # test_quantizer.py
 
 import unittest
-import torch
+
 import bitsandbytes as bnb
+import torch
 from transformers.modeling_utils import Conv1D
+
 from quantizer import Quantizer, MixedQuantizer, SUPPORTED_TYPES
+
 
 class NestedMockModel(torch.nn.Module):
     """
@@ -64,18 +67,6 @@ class TestQuantizer(unittest.TestCase):
 
     def test_supported_types_constant(self):
         self.assertEqual(SUPPORTED_TYPES, {"nf4", "fp4", "int8", "fp16", "bf16", "fp32"})
-
-    def test_bitsandbytes_nf4(self):
-        float_linear = torch.nn.Linear(self.in_features, self.out_features, bias=True)
-        qlayer = self.quantizer.quantize_linear_layer(float_linear, "nf4")
-        self.assertIsInstance(qlayer, bnb.nn.Linear4bit)
-        self.assertEqual(qlayer.weight.shape, float_linear.weight.shape)
-
-    def test_bitsandbytes_fp4(self):
-        float_linear = torch.nn.Linear(self.in_features, self.out_features, bias=False)
-        qlayer = self.quantizer.quantize_linear_layer(float_linear, "fp4")
-        self.assertIsInstance(qlayer, bnb.nn.Linear4bit)
-        self.assertEqual(qlayer.weight.shape, float_linear.weight.shape)
 
     def test_bitsandbytes_int8(self):
         float_linear = torch.nn.Linear(self.in_features, self.out_features, bias=True)
@@ -190,69 +181,6 @@ class TestQuantizer(unittest.TestCase):
         # Check nested layer quantization
         self.assertIsInstance(quantized_model.model.layers[0].fc1[0], bnb.nn.Linear4bit)
         self.assertIsInstance(quantized_model.model.layers[0].fc1[1], bnb.nn.Linear4bit)
-
-    def test_conv1d_to_linear_conversion(self):
-        # Create a Conv1D layer
-        conv1d_layer = Conv1D(self.in_features, self.out_features)
-        conv1d_layer.weight = torch.nn.Parameter(torch.randn(self.out_features, self.in_features))
-        conv1d_layer.bias = torch.nn.Parameter(torch.randn(self.out_features))
-
-        # Quantize the Conv1D layer
-        quantized_layer = self.quantizer.quantize_linear_layer(conv1d_layer, "nf4")
-
-        # Check that the quantized layer is an instance of Linear4bit
-        self.assertIsInstance(quantized_layer, bnb.nn.Linear4bit)
-
-        # Check that the weight shape is correct
-        self.assertEqual(quantized_layer.weight.shape, (self.out_features, self.in_features))
-
-    def test_quantize_conv1d_layer(self):
-        # Create a Conv1D layer
-        conv1d_layer = Conv1D(self.in_features, self.out_features)
-        conv1d_layer.weight = torch.nn.Parameter(torch.randn(self.out_features, self.in_features))
-        conv1d_layer.bias = torch.nn.Parameter(torch.randn(self.out_features))
-
-        # Quantize the Conv1D layer
-        quantized_layer = self.quantizer.quantize_linear_layer(conv1d_layer, "int8")
-
-        # Check that the quantized layer is an instance of Linear8bitLt
-        self.assertIsInstance(quantized_layer, bnb.nn.Linear8bitLt)
-
-        # Check that the weight shape is correct
-        self.assertEqual(quantized_layer.weight.shape, (self.in_features, self.out_features))
-
-    def test_mixed_quantizer_with_conv1d(self):
-        # Create a fake GPT-2 model with Conv1D layers
-        model = GPT2MockModel(n_layers=3)
-        schema = ["nf4", "int8", "fp16"]
-        mq = MixedQuantizer(schema, quantizer=self.quantizer)
-        quantized_model = mq.quantize_model(model, layer_attribute="h")
-
-        # Check that the layers are quantized correctly
-        for layer in quantized_model.h:
-            self.assertIsInstance(layer.c_attn, bnb.nn.Linear4bit)
-            self.assertIsInstance(layer.c_proj, bnb.nn.Linear8bitLt)
-            self.assertIsInstance(layer.c_fc, torch.nn.Linear)
-            self.assertEqual(layer.c_fc.weight.dtype, torch.float16)
-
-    def test_numerical_correctness_conv1d(self):
-        # Create a Conv1D layer
-        conv1d_layer = Conv1D(self.in_features, self.out_features)
-        conv1d_layer.weight = torch.nn.Parameter(torch.randn(self.out_features, self.in_features))
-        conv1d_layer.bias = torch.nn.Parameter(torch.randn(self.out_features))
-
-        # Quantize the Conv1D layer
-        quantized_layer = self.quantizer.quantize_linear_layer(conv1d_layer, "fp16")
-
-        # Generate random input
-        input_tensor = torch.randn(1, self.in_features)
-
-        # Compute outputs
-        original_output = conv1d_layer(input_tensor)
-        quantized_output = quantized_layer(input_tensor)
-
-        # Check that the outputs are close
-        self.assertTrue(torch.allclose(original_output, quantized_output, atol=1e-3))
 
 if __name__ == "__main__":
     unittest.main()

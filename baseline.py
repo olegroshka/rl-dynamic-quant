@@ -19,7 +19,7 @@ logger = logging.getLogger(__name__)
 
 
 class ModelCreator:
-    def __init__(self, model_name="gpt2", bit_width=8, device=None, trust_remote_code=True):
+    def __init__(self, model_name="gpt2", device=None, trust_remote_code=True):
         self.model_name = model_name
         self.device = device if device else torch.device("cuda" if torch.cuda.is_available() else "cpu")
         logger.info(f"Using device: {self.device}")
@@ -126,7 +126,6 @@ def main():
     parser = argparse.ArgumentParser(description="Create a reference model.")
     parser.add_argument("--name", type=str, required=True, help="Name for the baseline experiment")
     parser.add_argument("--model", type=str, default="gpt2", help="Model name (default: gpt2)")
-    parser.add_argument("--bit_width", type=int, default=8, help="Quantization bit width (default: 8)")
     parser.add_argument("--dataset", type=str, default="commonsense_qa", help="Dataset name (default: commonsense_qa)")
     parser.add_argument("--batch_size", type=int, default=8, help="Batch size for training (default: 8)")
     parser.add_argument("--epochs", type=int, default=3, help="Number of fine-tuning epochs (default: 3)")
@@ -141,7 +140,7 @@ def main():
         logger.warning(f"Output directory {output_dir} already exists. Files may be overwritten.")
 
     # Create and configure the model
-    creator = ModelCreator(model_name=args.model, bit_width=args.bit_width, trust_remote_code=args.trust_remote_code)
+    creator = ModelCreator(model_name=args.model, trust_remote_code=args.trust_remote_code)
 
     # Load dataset
     data_handler = DataHandler(dataset_name=args.dataset, batch_size=args.batch_size, max_length=128)

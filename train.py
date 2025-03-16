@@ -8,10 +8,10 @@ import torch
 from transformers import GPT2LMHeadModel, GPT2Tokenizer, AutoTokenizer, AutoModelForCausalLM
 import wandb
 
-from advanced_ppo_trainer import AdvancedPPOTrainer
+from ppo import PPOTrainer
 from baseline_network import BaselineNetwork
 from data_handler import DataHandler
-from enhanced_env import EnhancedQuantizationEnv, LayerStats
+from rl_env import QuantizationEnv, LayerStats
 from policy import PolicyNetPPO
 from quantizer import Quantizer
 
@@ -40,10 +40,12 @@ def main():
     parser.add_argument("--quant_types", type=str, default="nf4,fp4,int8,fp16", help="Supported quantization types: nf4, fp4, int8, fp16, bf16, fp32")
     parser.add_argument("--reference_model_dir", type=str, default=None, help="Directory for the fine-tuned reference model")
     parser.add_argument("--trust_remote_code", action="store_true", help="Set this flag if your model requires custom code (e.g., Qwen, Phi-2).")
+    parser.add_argument("--reward-weights", type=str, default="8.0,3.0,0.05,5.0", help="Reward weights: {w_performance, w_kl, w_entropy, w_memory}")
 
     args = parser.parse_args()
 
     quant_types = args.quant_types.split(',')
+    reward_weights = args.reward_weights.split(',')
 
     output_dir = os.path.join("results", args.name)
 
@@ -85,13 +87,13 @@ def main():
     quantizer = Quantizer(compute_dtype=torch.float16, target_device=device)
 
     reward_weights = {
-        'performance': 8.0, #1.0,
-        'kl': 10.0,#0.1,
-        'entropy': 0.05,
-        'memory': 5.0#0.5 #2.5,  # 0.2, #0.3, #0.85, #1.0
+        'performance': reward_weights[0],#8.0, #1.0,
+        'kl': reward_weights[1],#3.0,#0.1,
+        'entropy': reward_weights[2],#0.05,
+        'memory': reward_weights[3],#5.0#0.5 #2.5,  # 0.2, #0.3, #0.85, #1.0
     }
 
-    env = EnhancedQuantizationEnv(
+    env = QuantizationEnv(
         model=model,
         train_loader=train_loader,
         val_loader=val_loader,
@@ -118,7 +120,7 @@ def main():
         "episodes": args.episodes
     }
 
-    trainer = AdvancedPPOTrainer(
+    trainer = PPOTrainer(
         env=env,
         policy=policy,
         baseline=baseline,
