@@ -23,17 +23,19 @@ def main():
 
     # 2) the list of quantization schemas
     quant_schemas = [
-        "['fp16', 'fp16', 'fp16', 'fp16', 'fp16', 'fp16', 'fp16', 'fp16', 'fp16', 'fp16', 'fp16', 'fp16']",
-        "['int8', 'int8', 'int8', 'int8', 'int8', 'int8', 'int8', 'int8', 'int8', 'int8', 'int8', 'int8']",
         "['nf4', 'nf4', 'nf4', 'nf4', 'nf4', 'nf4', 'nf4', 'nf4', 'nf4', 'nf4', 'nf4', 'nf4']",
+        #"['int8', 'int8', 'int8', 'int8', 'int8', 'int8', 'int8', 'int8', 'int8', 'int8', 'int8', 'int8']",
+        "['fp16', 'fp16', 'fp16', 'fp16', 'fp16', 'fp16', 'fp16', 'fp16', 'fp16', 'fp16', 'fp16', 'fp16']",
         "['fp16', 'int8', 'fp16', 'nf4', 'fp16', 'int8', 'fp16', 'int8', 'fp4', 'nf4', 'int8', 'fp4']",
-        "['fp4', 'int8', 'fp4', 'nf4', 'fp16', 'fp4', 'fp4', 'fp4', 'nf4', 'nf4', 'fp16', 'nf4']",
+        #"['fp4', 'int8', 'fp4', 'nf4', 'fp16', 'fp4', 'fp4', 'fp4', 'nf4', 'nf4', 'fp16', 'nf4']",
+        "['fp16', 'nf4', 'nf4', 'nf4', 'nf4', 'int8', 'fp4', 'nf4', 'int8', 'nf4', 'nf4', 'nf4']", # gpt2-250-gae-ewa-rwd-v1
+        "['fp16', 'nf4', 'nf4', 'fp16', 'nf4', 'nf4', 'nf4', 'int8', 'int8', 'nf4', 'nf4', 'fp4']" # gpt2-250-gae-ewa-rwd-v1
     ]
 
     model_dir = "results/gpt-2-baseline"
 
     # 3) number of repeated runs per combination
-    num_runs = 3
+    num_runs = 1
 
 
     for dataset in datasets:
