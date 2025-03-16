@@ -1,1 +1,42 @@
 /results/
+
+# LaTeX auxiliary & build files  
+*.aux  
+*.log  
+*.bbl  
+*.blg  
+*.bcf  
+*.out  
+*.run.xml  
+*.synctex.gz  
+*.fdb_latexmk  
+*.fls  
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.pyw
+*.pyz
+*.pywz
+*.pyd
+*.pyw
+*.pyz
+*.pywz
+
+# Jupyter
+*.ipynb
+*.ipynb_checkpoints
+*.ipynb_checkpoints_old
+*.ipynb_checkpoints_old_old
+*.ipynb_checkpoints_old_old_old
+*.ipynb_checkpoints_old_old_old_old 
+
+# PyTorch
+*.pt
+*.pth
+*.ptl
+*.pth.tar
+*.pth.tar.gz
+*.pth.tar.bz2  
