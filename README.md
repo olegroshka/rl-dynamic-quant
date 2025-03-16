@@ -1,4 +1,3 @@
-Below is a **complete, ready-to-use `README.md`** that is consistent with the details shown in your poster. It summarizes DynaQuant’s motivation, core approach, results, and future directions. You can adapt the command-line examples and file references to match your actual code structure.
 
 ---
 
