@@ -321,7 +321,7 @@ def main():
         y_label2="Reward",
         y_label3="Baseline Loss",
         title="PPO Loss, Reward, and Baseline Loss Over Time",
-        save_path="losses_plot.png"
+        save_path="report/losses_plot.png"
     )
 
     # Save Layer Quantization Plot
@@ -331,7 +331,7 @@ def main():
         y_label1="Distribution of Quantization Types (%)",
         y_label2="Memory Saved (%)", 
         title="Layer-wise Quantization Types Distribution and Memory Saved Over Episodes",
-        save_path="layer_quantization_plot.png"
+        save_path="report/layer_quantization_plot.png"
     )
 
     # Save Layer Distribution Plot
@@ -340,7 +340,7 @@ def main():
         x_label="Layer",
         y_label="Distribution of Quantization Types (%)",
         title="Quantization Type Distribution Across Layers",
-        save_path="layer_distribution_plot.png"
+        save_path="report/layer_distribution_plot.png"
     )
 
 if __name__ == "__main__":
