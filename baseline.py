@@ -25,13 +25,13 @@ class ModelCreator:
         logger.info(f"Using device: {self.device}")
 
         # Load model and tokenizer
-        tokenizer = AutoTokenizer.from_pretrained(
+        self.tokenizer = AutoTokenizer.from_pretrained(
             model_name,
             trust_remote_code=trust_remote_code
         )
         # Some models do not have a pad_token by default (similar to GPT2).
-        if tokenizer.pad_token is None:
-            tokenizer.pad_token = tokenizer.eos_token
+        if self.tokenizer.pad_token is None:
+            self.tokenizer.pad_token = self.tokenizer.eos_token
 
         self.model = AutoModelForCausalLM.from_pretrained(
             model_name,
@@ -157,9 +157,11 @@ def main():
     creator.save_model(output_dir)
 
     results = {
-        "model_name": args.model,
-        "bit_width": args.bit_width,
+        "model": args.model,
         "dataset": args.dataset,
+        "epochs": args.epochs,
+        "learning_rate": args.learning_rate,
+        "batch_size": args.batch_size,
         "eval_results": eval_results
     }
 
