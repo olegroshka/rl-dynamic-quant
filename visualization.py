@@ -5,6 +5,7 @@ import seaborn as sns
 import argparse
 from collections import Counter
 import pandas as pd
+from collections import defaultdict
 
 
 def load_data(file_path):
@@ -206,7 +207,6 @@ def plot_three_scales(vals1, vals2, vals3, x_label, y_label1, y_label2, y_label3
     plt.savefig(save_path, bbox_inches='tight')
     print(f"Saved plot: {save_path}")
 
-
 def plot_single_layer_types(layer_types, x_label, y_label, title, save_path):
     """
     Plot a single instance of layer types with different markers for different quantization types.
@@ -255,6 +255,11 @@ def plot_single_layer_types(layer_types, x_label, y_label, title, save_path):
     layers = range(len(layer_types))
     plotted_types = set()  # Track which types we've already added to legend
     
+    # First plot the connecting lines
+    y_vals = [bit_width_classes[qtype] for qtype in layer_types]
+    ax.plot(layers, y_vals, '-', color='gray', alpha=0.3, zorder=1)
+    
+    # Then plot the scatter points on top
     for layer_idx, qtype in enumerate(layer_types):
         y_val = bit_width_classes[qtype]
         # Only add to legend if we haven't seen this type before
@@ -263,13 +268,15 @@ def plot_single_layer_types(layer_types, x_label, y_label, title, save_path):
                       marker=markers[qtype],
                       color=colors[qtype],
                       s=100,
-                      label=qtype)
+                      label=qtype,
+                      zorder=2)
             plotted_types.add(qtype)
         else:
             ax.scatter(layer_idx, y_val,
                       marker=markers[qtype],
                       color=colors[qtype],
-                      s=100)
+                      s=100,
+                      zorder=2)
     
     # Customize the plot
     ax.set_xlabel(x_label)
@@ -287,6 +294,192 @@ def plot_single_layer_types(layer_types, x_label, y_label, title, save_path):
     # Save the plot
     plt.savefig(save_path, bbox_inches='tight')
     print(f"Saved plot: {save_path}")
+
+def plot_raw_heatmap(layer_bits, x_label, y_label, title, save_path, palette=None):
+    """
+    Plot a heatmap showing the raw quantization types for each layer across episodes.
+    
+    Parameters:
+    - layer_bits: List of lists, where each inner list contains quantization types for each layer
+    - x_label: Label for the x-axis.
+    - y_label: Label for the y-axis.
+    - title: Title of the plot.
+    - save_path: Path where to save the plot.
+    - palette: Optional color palette (default: None, will use the same color scheme as other plots).
+    """
+    sns.set(style="whitegrid")
+    
+    # Convert to numpy array for easier manipulation
+    quant_matrix = np.array(layer_bits, dtype=object)
+    num_episodes, num_layers = quant_matrix.shape
+    
+    # Get unique quantization types and sort by bit width
+    bit_order = {'fp32': 0, 'bf16': 1, 'fp16': 1, 'int8': 2, 'fp4': 3, 'nf4': 3}
+    unique_types = sorted(set(quant_matrix.flatten()), key=lambda x: bit_order.get(x, 999))
+    quant_to_int = {qt: i for i, qt in enumerate(unique_types)}
+    
+    # Convert quantization types to integers for heatmap
+    int_mat = np.array([[quant_to_int[q] for q in row] for row in quant_matrix], dtype=int)
+    
+    # Choose a color palette matching our other plots
+    colors = {
+        'fp32': '#ff9999',
+        'bf16': '#ffcc99',
+        'fp16': '#ffcc99',
+        'int8': '#99ff99',
+        'fp4': '#66b3ff',
+        'nf4': '#c2c2f0'
+    }
+    
+    # Create color map
+    if palette:
+        cmap = sns.color_palette(palette, n_colors=len(unique_types))
+    else:
+        cmap = [colors.get(qt, f'#{hash(qt) % 0xffffff:06x}') for qt in unique_types]
+    
+    # Create figure
+    plt.figure(figsize=(12, 8))
+    
+    # Show only major episode ticks (every 50th episode)
+    step = max(num_episodes // 10, 1)  # Show ~10 ticks
+    major_episodes = range(0, num_episodes, step)
+    
+    # Plot heatmap
+    ax = plt.axes([0.1, 0.1, 0.75, 0.8])
+    sns.heatmap(
+        int_mat,
+        cmap=cmap,
+        vmin=0,
+        vmax=len(unique_types) - 1,
+        cbar=False,
+        xticklabels=range(num_layers),
+        yticklabels=False,
+        ax=ax
+    )
+    
+    # Add legend on the right
+    ax_legend = plt.axes([0.92, 0.1, 0.03, 0.8])
+    for i, qt in enumerate(reversed(unique_types)):
+        y = i / len(unique_types)
+        height = 1.0 / len(unique_types)
+        color = colors.get(qt, f'#{hash(qt) % 0xffffff:06x}')
+        ax_legend.add_patch(plt.Rectangle((0, y), 1, height, facecolor=color))
+        ax_legend.text(1.5, y + height/2, qt, va='center')
+    ax_legend.set_xticks([])
+    ax_legend.set_yticks([])
+    
+    # Labels and title
+    ax.set_title(title)
+    ax.set_xlabel("Layers")
+    ax.set_ylabel("Episode Bins")
+    
+    # Rotate x-axis labels for better readability
+    plt.setp(ax.get_xticklabels(), rotation=0, ha='right')
+    
+    # Save the plot
+    plt.savefig(save_path, dpi=200, bbox_inches='tight')
+    print(f"Saved plot: {save_path}")
+    plt.close()
+
+
+def plot_binned_heatmap(layer_bits, bin_size, x_label, y_label, title, save_path, palette=None):
+    """
+    Plot a heatmap showing binned quantization types (majority vote per bin) for each layer.
+    
+    Parameters:
+    - layer_bits: List of lists, where each inner list contains quantization types for each layer
+    - bin_size: Number of episodes to include in each bin (for majority voting)
+    - x_label: Label for the x-axis.
+    - y_label: Label for the y-axis.
+    - title: Title of the plot.
+    - save_path: Path where to save the plot.
+    - palette: Optional color palette (default: None, will use the same color scheme as other plots).
+    """
+    sns.set(style="whitegrid")
+    
+    # Convert to numpy array for easier manipulation
+    quant_matrix = np.array(layer_bits, dtype=object)
+    num_episodes, num_layers = quant_matrix.shape
+    
+    # Bin episodes using majority voting
+    num_bins = (num_episodes + bin_size - 1) // bin_size
+    binned_matrix = np.empty((num_bins, num_layers), dtype=object)
+    
+    for b in range(num_bins):
+        start = b * bin_size
+        end = min((b + 1) * bin_size, num_episodes)
+        chunk = quant_matrix[start:end]
+        
+        for layer in range(num_layers):
+            counts = Counter(chunk[:, layer])
+            majority_type = max(counts, key=counts.get)
+            binned_matrix[b, layer] = majority_type
+    
+    # Get unique quantization types and sort by bit width
+    bit_order = {'fp32': 0, 'bf16': 1, 'fp16': 1, 'int8': 2, 'fp4': 3, 'nf4': 3}
+    unique_types = sorted(set(binned_matrix.flatten()), key=lambda x: bit_order.get(x, 999))
+    quant_to_int = {qt: i for i, qt in enumerate(unique_types)}
+    
+    # Convert quantization types to integers for heatmap
+    int_mat = np.array([[quant_to_int[q] for q in row] for row in binned_matrix], dtype=int)
+    
+    # Choose a color palette matching our other plots
+    colors = {
+        'fp32': '#ff9999',
+        'bf16': '#ffcc99',
+        'fp16': '#ffcc99',
+        'int8': '#99ff99',
+        'fp4': '#66b3ff',
+        'nf4': '#c2c2f0'
+    }
+    
+    # Create color map
+    if palette:
+        cmap = sns.color_palette(palette, n_colors=len(unique_types))
+    else:
+        cmap = [colors.get(qt, f'#{hash(qt) % 0xffffff:06x}') for qt in unique_types]
+    
+    # Create figure
+    plt.figure(figsize=(12, 8))
+    
+    # Create main plot area with adjusted size to accommodate scale
+    ax = plt.axes([0.1, 0.1, 0.75, 0.8])
+    
+    sns.heatmap(
+        int_mat,
+        cmap=cmap,
+        vmin=0,
+        vmax=len(unique_types) - 1,
+        cbar=False,  # Remove colorbar
+        xticklabels=range(num_layers),
+        yticklabels=[f"Bin {i}" for i in range(num_bins)],
+        ax=ax
+    )
+    
+    # Add custom colorbar-like scale on the right
+    ax_scale = plt.axes([0.92, 0.1, 0.03, 0.8])
+    for i, qt in enumerate(reversed(unique_types)):
+        y = i / len(unique_types)
+        height = 1.0 / len(unique_types)
+        color = colors.get(qt, f'#{hash(qt) % 0xffffff:06x}')
+        ax_scale.add_patch(plt.Rectangle((0, y), 1, height, facecolor=color))
+        ax_scale.text(1.5, y + height/2, qt, va='center')
+    ax_scale.set_xticks([])
+    ax_scale.set_yticks([])
+    
+    # Set labels and title
+    ax.set_title(title, pad=20)
+    ax.set_xlabel("Layers")
+    ax.set_ylabel(y_label)
+    
+    # Rotate x-axis labels for better readability
+    plt.setp(ax.get_xticklabels(), rotation=0, ha='right')
+    plt.setp(ax.get_yticklabels(), rotation=0)
+    
+    # Save the plot
+    plt.savefig(save_path, dpi=200, bbox_inches='tight')
+    print(f"Saved plot: {save_path}")
+    plt.close()
 
 def main():
     parser = argparse.ArgumentParser(description="Plot quantization and RL metrics from JSON data")
@@ -341,6 +534,25 @@ def main():
         y_label="Distribution of Quantization Types (%)",
         title="Quantization Type Distribution Across Layers",
         save_path="report/layer_distribution_plot.png"
+    )
+
+    # Save Raw Heatmap
+    plot_raw_heatmap(
+        layer_bits,
+        x_label="Layer",
+        y_label="Episode",
+        title="Raw Quantization Types Heatmap",
+        save_path="report/raw_heatmap.png"
+    )
+
+    # Save Binned Heatmap
+    plot_binned_heatmap(
+        layer_bits,
+        10,  # bin_size
+        x_label="Layer",
+        y_label="Binned Quantization Types",
+        title="Binned Quantization Types Heatmap",
+        save_path="report/binned_heatmap.png"
     )
 
 if __name__ == "__main__":
