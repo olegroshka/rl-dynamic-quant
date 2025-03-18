@@ -45,8 +45,8 @@ def main():
     args = parser.parse_args()
 
     quant_types = args.quant_types.split(',')
-    
-    reward_weights = [float(x) for x in args.reward_weights.split(',')]
+
+    reward_weights = [float(x) for x in args.reward_weights.split(",")]
 
     output_dir = os.path.join("results", args.name)
 

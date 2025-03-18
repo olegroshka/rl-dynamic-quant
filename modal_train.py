@@ -16,6 +16,7 @@ results_volume = modal.Volume.from_name("fine_tuned_volume")
 stub = modal.App("DynaQ-RL-pipeline")
 
 # 4) GPU + other config for the remote function
+#image.add_local_dir(".", remote_path="/root/code")
 @stub.function(
     image=image,
     gpu="H100:1",            # or "H100:1", "V100:1", etc.
@@ -55,7 +56,7 @@ def run_train(
         f"--episodes={episodes}",
         "--finetune_steps=5",
         "--lr=1e-3",
-        "--batch_size=16",
+        "--batch_size=32",
     ]
 
     print("Running command:", " ".join(cmd))
@@ -71,13 +72,13 @@ def main():
       2) After training is done, download the results from the volume to a local folder.
     """
     # 1) Start the remote training run
-    experiment_name = "QwenR1-250-gae-ewa-rwd-v1"    # The name passed above
+    experiment_name = "gpt2-large-250-gae-ewa-rwd-v1"    # The name passed above
 
     run_train.remote(
         name=experiment_name,
-        model="deepseek-ai/DeepSeek-R1-Distill-Qwen-1.5B",
+        model="gpt2-large",
         dataset="commonsense_qa",
-        episodes=500,
+        episodes=250,
     )
 
     sleep(5)

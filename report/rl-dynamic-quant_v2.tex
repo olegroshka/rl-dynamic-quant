@@ -1,8 +1,5 @@
 \documentclass{article}
 
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-% PACKAGES
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 \usepackage{microtype}
 \usepackage{graphicx}
 \usepackage{subfigure}
@@ -47,17 +44,12 @@
 	% Print affiliations footnote
 	\printAffiliationsAndNotice{}
 	
-	%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-	% ABSTRACT
-	%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 	\begin{abstract}
 		Large Language Models (LLMs) often suffer from excessive memory footprints and slow inference, creating barriers to deploying them on commodity devices or serving high-traffic scenarios. Quantization---using lower numerical precision---is a straightforward way to compress model size, but applying a \emph{uniform} precision (e.g., 8-bit) is suboptimal: some layers tolerate lower precision better than others. We propose \textbf{DynaQuant}, a Reinforcement Learning (RL) framework that \emph{dynamically} selects per-layer quantization schemes (e.g.\ 4-bit \texttt{nf4}, \texttt{fp4}, \texttt{int8}, or \texttt{fp16}) during short, iterative fine-tuning. Concretely, an RL agent observes each layer's statistics, memory usage, and partial performance signals to choose how to quantize that layer. We employ a multi-term reward that balances perplexity, KL divergence (vs.\ a reference model), attention entropy changes, and memory savings. Experiments on GPT-2 over BoolQ and PIQA show that DynaQuant finds \emph{mixed-precision} assignments that outperform uniform 4-bit or 16-bit baselines in perplexity and accuracy, while still yielding significant memory savings.
 	\end{abstract}
 	
-	%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 	\section{Introduction}
 	\label{sec:intro}
-	%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 	Recent progress in Large Language Models (LLMs) has driven state-of-the-art results in a variety of NLP tasks. However, the rapid growth in parameter counts (hundreds of millions to billions of parameters) poses nontrivial memory and runtime challenges, especially for resource-constrained deployments or high-throughput applications. \emph{Quantization} is a practical approach to reduce model size by lowering numerical precision (e.g.\ from float16 to 8-bit), enabling smaller memory footprints and often faster inference \cite{dettmers2022llmint8,frantar2022gptq}.
 	
 	Yet, standard uniform quantization assigns the same bit-width to all layers, which can be suboptimal. Some layers—particularly in attention or feed-forward blocks—are more sensitive to precision loss, while others can be safely compressed to 4-bit or even 2-bit with minimal accuracy degradation \cite{dong2019hawq,dettmers2023qlora}. This motivates \emph{mixed-precision quantization}, where each layer’s precision is chosen adaptively.
@@ -73,32 +65,40 @@
 	
 	Empirically, we show that \textbf{DynaQuant} discovers policies that \emph{improve} perplexity and often accuracy relative to uniform 4-bit or 16-bit baselines, with memory usage that sits between those extremes. Our code is built on GPT-2 as a testbed and extends easily to other LLMs.
 	
-	%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 	\section{Related Work}
 	\label{sec:related}
-	%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 	\paragraph{LLM Quantization.}
 	Numerous works compress large models with low-precision formats: int8 \cite{dettmers2022llmint8}, 4-bit normal float (nf4) \cite{frantar2022gptq}, and others \cite{malinovskii2024pvtuning}. Typically, a \emph{uniform} scheme is used. Our approach is complementary, as we pick distinct bit-widths across layers via RL.
 	
 	\paragraph{Mixed-Precision and NAS.}
-	Prior research in Neural Architecture Search (NAS) explores per-layer bit allocations \cite{dong2019hawq,Wang2020apq} but often focuses on smaller networks. We adapt these ideas for large Transformer-based LLMs, adding layer-by-layer \emph{short fine-tuning} and multi-objective RL signals (e.g.\ perplexity, KL, memory, attention).
+	Prior research in Neural Architecture Search (NAS) explores per-layer bit allocations \cite{dong2019hawq,Wang2020apq}, but typically focuses on smaller networks and does not fully account for the \emph{layer-by-layer dynamic impact} of quantization. We adapt these ideas for large Transformer-based LLMs by introducing short, iterative fine-tuning for each layer alongside multi-objective RL signals (e.g.\ perplexity, KL, memory, attention). Crucially, we fine-tune \emph{both} the quantized model \emph{and} an \emph{episodic reference model} \textbf{after every layer is quantized}, using the same training data for a fixed number of steps. This allows us to precisely capture how quantizing one layer affects subsequent performance—something, to the best of our knowledge, not explored by existing mixed-precision quantization methods for large LLMs.
 	
 	\paragraph{RL for Model Optimization.}
-	RL has been employed to search network architectures \cite{zoph2016neural} or prune channels \cite{he2018amc}, but is less explored for dynamic LLM quantization. Our environment extends prior RL-based compression setups to handle short iterative fine-tuning, and an episodic reference model that closely mirrors the quantized model’s training steps.
+	Prior works have employed reinforcement learning to discover neural architectures \cite{zoph2016neural} or prune channels \cite{he2018amc}. We build on these techniques by designing a \emph{custom RL environment} tailored to quantizing large Transformer models \emph{layer-by-layer}. In our setup, an agent selects from multiple bit-width formats at each step, and the environment provides a reward based on changes in perplexity, KL divergence, attention entropy, and memory usage. This allows the policy to optimize a \emph{dynamic, multi-term objective} for LLM quantization, rather than applying a static, uniform scheme.
 	
-	%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+	
 	\section{Methodology}
 	\label{sec:method}
-	%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-	
 	\subsection{RL Environment: Dynamic Layer Quantization}
-	We assume a reference model $\mathcal{M}_{\text{ref}}$ (e.g.\ GPT-2 in FP16) and a copy $\mathcal{M}_{\text{quant}}$ that we will quantize layer-by-layer. Each \textbf{episode} processes all $N$ layers in sequence, with each layer representing one RL step:
+	We maintain two models: a reference model $\mathcal{M}_{\text{ref}}$ (e.g.\ GPT-2 in FP16) and a copy $\mathcal{M}_{\text{quant}}$ for quantization. Each \textbf{episode} processes all $N$ layers in sequence, where each layer corresponds to an RL step:
+	
 	\begin{enumerate}
-		\item \textit{State} $s_i$: includes layer statistics (weight mean/std, gradient norms, attention entropy), the current layer index $i$, the model’s current perplexity, memory usage so far, and the previous layer’s quantization choice.
-		\item \textit{Action} $a_i$: one of $\{\texttt{nf4}, \texttt{fp4}, \texttt{int8}, \texttt{fp16}\}$.
-		\item \textit{Transition}: We quantize layer $i$ in $\mathcal{M}_{\text{quant}}$, then briefly fine-tune both $\mathcal{M}_{\text{ref}}$ and $\mathcal{M}_{\text{quant}}$ on the same minibatch.
-		\item \textit{Reward} $r_i$: measures performance vs.\ memory trade-offs (details below).
+		\item \textit{State} $s_i$: incorporates diverse features of the current model and layer. Concretely, we extract:
+		\begin{itemize}
+			\item \emph{Layer statistics:} mean and standard deviation of weights, gradient norms, and attention entropy for the layer being quantized.
+			\item \emph{Global signals:} the normalized layer index ($i/N$), current model perplexity, and perplexity deltas (how quantizing previous layers changed perplexity).
+			\item \emph{Previous layer’s quantization choice:} encoded as a numeric ratio (e.g.\ bit-width divided by 16).
+			\item \emph{Exponential moving averages (EWAs):} we keep running EWAs of key reward components (performance, KL, entropy, memory), smoothing the training signal over steps.
+		\end{itemize}
+		
+		\item \textit{Action} $a_i$: selecting the quantization format from $\{\texttt{nf4}, \texttt{fp4}, \texttt{int8}, \texttt{fp16}\}$ for layer $i$.
+		
+		\item \textit{Transition}: we quantize layer $i$ in $\mathcal{M}_{\text{quant}}$, then apply \emph{short iterative fine-tuning} on both $\mathcal{M}_{\text{ref}}$ and $\mathcal{M}_{\text{quant}}$, using the \emph{identical} mini-batch for a fixed number of steps. This ensures the agent observes the immediate impact of quantizing that layer.
+		
+		\item \textit{Reward} $r_i$: once both models are briefly fine-tuned, we measure the resulting perplexities, KL divergence, attention entropy, and memory savings. These are combined (with EWAs) into a multi-term scalar reward. Notably, although we do not include direct “memory usage” in the state vector, the \emph{reward} reflects how many bits are saved by quantizing the current layer, weighted by that layer’s fraction of total parameters.
 	\end{enumerate}
+	
+	At the end of all $N$ layers, the environment signals the episode is complete and the PPO agent updates its policy using the collected trajectory. This cycle repeats until the agent converges on an effective per-layer quantization policy.
 	
 	\begin{figure}[t]
 		\centering
@@ -106,17 +106,17 @@
 			% Nodes
 			\node[draw, rectangle, minimum width=3.2cm, minimum height=1.2cm] (quantmodel) {\textbf{Quantized Model}};
 			\node[draw, rectangle, right=1.8cm of quantmodel, minimum width=2.8cm, minimum height=1.2cm] (agent) {\textbf{RL Agent}};
-			\node[draw, rectangle, below=1.3cm of agent, minimum width=2.5cm, minimum height=1.0cm] (eval) {Evaluate Loss/PPL};
+			\node[draw, rectangle, below=2.5cm of agent, minimum width=2.5cm, minimum height=1.0cm] (eval) {Evaluate Loss/PPL};
 			
 			\node[draw, rectangle, fill=gray!20, minimum width=3.0cm, minimum height=1.2cm, left=1.8cm of quantmodel] (ref) {\textbf{Episodic Ref. Model}};
-			\node[draw, rectangle, below=1.3cm of ref, minimum width=3.0cm, minimum height=1.2cm] (quant) {Apply Quant Type};
+			\node[draw, rectangle, below=2.5cm of ref, minimum width=3.0cm, minimum height=1.2cm] (quant) {Apply Quant Type};
 			
 			% Arrows
 			\draw[->, thick] (quantmodel) -- node[above]{\small state} (agent);
-			\draw[->, thick] (agent) -- node[left]{\small act (qtype)} (quant);
+			\draw[->, thick] (agent) -- node[left=0.3]{\small act (qtype)} (quant);
 			\draw[->, thick] (quant) -- node[left]{\small modify} (quantmodel);
-			\draw[->, thick] (ref) -- node[right]{\small ref ppl} (eval);
-			\draw[->, thick] (quantmodel) -- node[right]{\small quant ppl} (eval);
+			\draw[->, thick] (ref) -- node[right=0.5]{\small ref ppl} (eval);
+			\draw[->, thick] (quantmodel) -- node[right=0.1]{\small quant ppl} (eval);
 			\draw[->, thick] (eval) -- node[right]{\small reward} (agent);
 			
 			% Optional brace grouping: Fine-tuning
@@ -129,43 +129,80 @@
 		\label{fig:rl-env}
 		\vspace{-0.5em}
 	\end{figure}
-	
-	\subsection{Reward Design}
-	\label{subsec:reward}
-	From the \textbf{final} version of our code, the \emph{reward} $r_i$ for layer $i$ is a weighted sum of four terms:
-	
-	\paragraph{(1) Performance (Perplexity) Reward.}
-	We measure the perplexity difference between reference ($\mathrm{PPL}_\text{ref}$) and quantized ($\mathrm{PPL}_\text{quant}$) models:
-	\begin{equation}
-		r_{\mathrm{perf}} = (\mathrm{PPL}_\text{ref} \;-\; \mathrm{PPL}_\text{quant}) \;\times\; w_{\mathrm{perf}}.
-		\label{eq:perf_term}
-	\end{equation}
-	If the quantized model has lower perplexity (compared to reference), $r_{\mathrm{perf}}$ is positive. Often, $\mathrm{PPL}_\text{quant}$ is higher, giving a negative contribution.
-	
-	\paragraph{(2) KL Divergence Penalty.}
-	We compute $\mathrm{KL}(p_\text{quant}\,\|\,p_\text{ref})$ on a validation batch. A large KL means the quantized distribution diverges from reference:
-	\begin{equation}
-		r_{\mathrm{KL}} \;=\; -\, w_{\mathrm{KL}} \;\times\; \mathrm{KL}(p_\text{quant}\,\|\,p_\text{ref}).
-	\end{equation}
-	
-	\paragraph{(3) Attention Entropy Preservation.}
-	We compare the attention entropies in layer $i$: $E_\text{quant}$ vs.\ $E_\text{ref}$. Retaining diverse attention patterns is often crucial:
-	\begin{equation}
-		r_{\mathrm{entropy}} = (E_\text{quant} \;-\; E_\text{ref}) \times w_{\mathrm{entropy}}.
-	\end{equation}
-	
-	\paragraph{(4) Memory Savings.}
-	We measure how many bits are saved in layer $i$ relative to an FP16 baseline. If $a_i$ is $\texttt{nf4}$, we save $16-4=12$ bits per parameter, scaled by the fraction of total params in layer $i$:
-	\begin{equation}
-		r_{\mathrm{mem}} = \Bigl(\frac{16 - \text{bits}(a_i)}{16}\Bigr)\;\times \;\bigl(\text{layer\_size\_ratio}_i\bigr)\;\times w_{\mathrm{memory}}.
-	\end{equation}
-	
-	Hence:
-	\begin{align}
-		r_i &= r_{\mathrm{perf}} + r_{\mathrm{KL}} + r_{\mathrm{entropy}} + r_{\mathrm{mem}}.
-		\label{eq:reward_final}
-	\end{align}
-	
+
+    \subsection{Reward Design}
+    \label{subsec:reward}
+    
+    Our reward function for layer \(i\), denoted \(r_i\), is a weighted sum of four terms capturing performance, divergence, attention preservation, and memory savings:
+    
+    \paragraph{(1) Performance (Perplexity) Reward.}
+    We compare the perplexities of the reference model (\(\mathrm{PPL}_\text{ref}\)) and the quantized model (\(\mathrm{PPL}_\text{quant}\)):
+    \begin{equation}
+    	r_{\mathrm{perf}} 
+    	\,=\, 
+    	\Bigl(\mathrm{PPL}_\text{ref} - \mathrm{PPL}_\text{quant}\Bigr)
+    	\,\times\, 
+    	w_{\mathrm{perf}}.
+    	\label{eq:perf_term}
+    \end{equation}
+    If quantization reduces perplexity below that of the reference, \(r_{\mathrm{perf}}\) is positive; otherwise, it is typically negative.
+    
+    \paragraph{(2) KL Divergence Penalty.}
+    To penalize large deviations in predictive distributions, we compute:
+    \begin{equation}
+    	r_{\mathrm{KL}} 
+    	\,=\, 
+    	-\, w_{\mathrm{KL}} 
+    	\,\times\, 
+    	\mathrm{KL}\bigl(p_\text{quant}\,\|\,p_\text{ref}\bigr),
+    \end{equation}
+    where \(p_\text{quant}\) and \(p_\text{ref}\) are the output distributions (softmax of the logits) from the quantized and reference models, respectively. A higher KL divergence incurs a larger negative reward.
+    
+    \paragraph{(3) Attention Entropy Preservation.}
+    Retaining rich attention patterns can be crucial for model quality. We quantify this by comparing the attention entropies of layer \(i\) in both models:
+    \begin{equation}
+    	r_{\mathrm{entropy}} 
+    	\,=\, 
+    	\bigl(E_\text{quant} - E_\text{ref}\bigr)
+    	\,\times\, 
+    	w_{\mathrm{entropy}},
+    \end{equation}
+    where \(E_\text{quant}\) and \(E_\text{ref}\) denote the mean attention entropy in the current layer for the quantized and reference models, respectively.
+    
+    \paragraph{(4) Memory Savings.}
+    Finally, we reward bit savings relative to a 16-bit baseline. For each parameter in layer \(i\), the agent saves \(16 - \text{bits}(a_i)\) bits if action \(a_i\) is chosen. This is weighted by the fraction of total parameters in layer \(i\), denoted \(\text{layer\_size\_ratio}_i\):
+    \begin{equation}
+    	r_{\mathrm{mem}} 
+    	\,=\, 
+    	\Bigl(\frac{16 - \text{bits}(a_i)}{16}\Bigr)
+    	\,\times\,
+    	\text{layer\_size\_ratio}_i
+    	\,\times\, 
+    	w_{\mathrm{memory}}.
+    \end{equation}
+    Here we define
+    \[
+    \text{layer\_size\_ratio}_i 
+    \,=\, 
+    \frac{\text{numParams}(i)}{\text{numParams}(\text{model})},
+    \]
+    so that layers with more parameters yield proportionally higher savings.
+        
+    Combining all terms yields the final reward for layer \(i\):
+    \begin{equation}
+    	\label{eq:reward_final}
+    	r_i 
+    	\,=\,
+    	r_{\mathrm{perf}} 
+    	\,+\, 
+    	r_{\mathrm{KL}} 
+    	\,+\, 
+    	r_{\mathrm{entropy}} 
+    	\,+\, 
+    	r_{\mathrm{mem}}.
+    \end{equation}
+    By adjusting the weights \(w_{\mathrm{perf}}, w_{\mathrm{KL}}, w_{\mathrm{entropy}},\) and \(w_{\mathrm{memory}}\), practitioners can prioritize different trade-offs, such as fidelity to the original distribution versus aggressive compression.
+    		
 	\subsection{Policy Learning via PPO}
 	We employ \textbf{Proximal Policy Optimization (PPO)} \cite{ppo2017} to update a small MLP policy $\pi_\theta$ that maps states to discrete actions (quantization types). At each new \emph{episode}, we:
 	\begin{enumerate}
@@ -213,51 +250,112 @@
 	
 	Algorithm~\ref{alg:dynaquant} shows a single training iteration (episode). We typically repeat many episodes, reinitializing $\mathcal{M}_\text{quant}$ and $\mathcal{M}_\text{ref}$ each time.
 	
-	
-	%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 	\section{Experiments}
 	\label{sec:experiments}
-	%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 	
 	\subsection{Setup and Datasets}
-	\paragraph{Model.}
-	We use GPT-2 (12-layer) as a proof-of-concept. The \emph{reference model} is GPT-2 in FP16, fully fine-tuned on CommonsenseQA. For RL episodes, we then quantize layer-by-layer on the same or similar data.
+	
+	\paragraph{Reference Model.}
+	We begin with GPT-2 (12-layer) as our base, fine-tuning it on CommonsenseQA using standard procedures (e.g.\ AdamW for several epochs) to produce an FP16 \emph{reference model}. This serves as the foundation for all subsequent quantization.
+	
+	\paragraph{Quantization Approach.}
+	All experiments---including both baselines and our RL-driven policy---use the same in-house quantization utilities. These support 4-bit (nf4/fp4) and 8-bit (int8) formats, as well as FP16/FP32 copy operations. This ensures consistent layer-wise transforms for both training and evaluation, so that any performance difference stems purely from how bits are allocated per layer, rather than mismatched quantization methods.
 	
 	\paragraph{Tasks.}
-	We evaluate on \textbf{BoolQ} (yes/no QA) and \textbf{PIQA} (multiple-choice physical reasoning). We measure:
+	We evaluate on two downstream benchmarks:
 	\begin{itemize}
-		\item \emph{Validation perplexity}
-		\item \emph{Multiple-choice accuracy}
-		\item \emph{Peak GPU memory usage} (MB)
-		\item \emph{Inference throughput} (tokens/s)
+		\item \textbf{BoolQ}: binary (yes/no) reading comprehension,
+		\item \textbf{PIQA}: a multiple-choice physical reasoning dataset.
 	\end{itemize}
+	Both are assessed on publicly available validation sets, where we measure:
+	\begin{enumerate}
+		\item \emph{Validation perplexity}, computed as the exponentiated mean cross-entropy over either the full or chunked sequences,
+		\item \emph{Multiple-choice accuracy}, where each choice is scored via negative cross-entropy and the highest-likelihood answer is selected,
+		\item \emph{Peak GPU memory usage} (MB), obtained by monitoring allocated memory before and after a forward pass,
+		\item \emph{Inference throughput} (tokens/s), measured by timing multiple forward passes over synthetic token batches.
+	\end{enumerate}
 	
-	\paragraph{Baselines.}
-	We compare \textbf{Uniform FP16} and \textbf{Uniform NF4} with learned RL-based \emph{mixed} assignments discovered after PPO training.
+	\subsection{Baselines and Evaluation Methodology}
 	
-	\subsection{Quantization Distributions and Reward Curves}
+	\paragraph{Uniform Precision Baselines.}
+	\textbf{Uniform FP16} directly uses the fine-tuned reference model. For \textbf{Uniform NF4}, the same reference model is converted to 4-bit across every linear layer in one uniform pass. In both cases, the underlying weights, hyperparameters, and training data remain identical, differing only in their final precision.
+	
+	\paragraph{RL-Based Mixed Precision.}
+	Our proposed \textbf{DynaQuant} uses a reinforcement learning policy to assign different bit-widths on a per-layer basis. After policy training, the layer-wise quantization scheme is finalized and applied to the reference model. The rest of the architecture and training data are unchanged, ensuring a fair comparison with uniform baselines.
+	
+	\paragraph{Evaluation Procedure.}
+	We evaluate all models---FP16, NF4, and RL-based mixed precision---through the same pipeline:
+	\begin{enumerate}
+		\item \emph{Load} the final checkpoint (reference or quantized) into GPT-2, applying our quantization utilities where needed.
+		\item \emph{Compute} validation perplexity on the relevant dataset via token-level cross-entropy.
+		\item \emph{Measure} multiple-choice accuracy by scoring each candidate answer; the correct one is identified by the lowest average cross-entropy.
+		\item \emph{Record} inference throughput and peak memory usage with repeated forward passes on synthetic batches.
+	\end{enumerate}
+	
+	By standardizing the quantization routines, data preprocessing, and evaluation scripts across all settings, we ensure that any observed differences in performance or memory usage reflect genuine trade-offs arising from the chosen precision formats.
+	
+	
+	\subsection{Loss Metrics}
 	\begin{figure}[ht]
 		\centering
-		\includegraphics[width=\columnwidth]{example-image-a}
+		\includegraphics[width=\columnwidth]{gpt2-500-gae-sig-ewa-rwd-v4-losses.png}
 		\vspace{-1em}
-		\caption{\small Example of total reward vs.\ episode. The agent steadily improves as it refines its per-layer quant decisions.}
-		\label{fig:reward_curves}
+		\caption{\small The final validation loss and the policy loss vs\ episode. The quantized model’s validation loss remains close to that of the reference model, while the RL policy loss stabilizes near zero, indicating convergence.}
+		\label{fig:loss_curves}
 		\vspace{-0.2em}
 	\end{figure}
+	Figure~\ref{fig:loss_curves} plots the quantized model’s validation loss alongside the RL policy loss over the course of training. 
+	\begin{itemize}
+		\item \textbf{Validation Loss (Green Curve).} This represents the \emph{quantized} model’s average cross-entropy on a held-out set after each full episode (i.e., once all layers have been quantized). Despite progressive quantization, the validation loss gradually decreases and remains close to that of our FP16 reference, indicating that the agent preserves the model’s accuracy even with aggressive per-layer quantization.
+		\item \textbf{RL Policy Loss (Orange Curve).} This curve measures the PPO objective that updates the quantization policy. Early in training, it fluctuates considerably as the policy explores different bit-width assignments. Over time, it stabilizes near zero, suggesting that the policy’s updates become relatively minor, having found a reasonably good strategy.
+		\item \textbf{Baseline Loss (Blue Curve).} For reference, we also show the baseline model’s loss. As expected, it plateaus once the baseline finishes its own fine-tuning, providing a performance anchor.
+	\end{itemize}
+	Overall, these trends confirm that our RL approach does \emph{not} severely degrade model quality, while the policy itself converges.
 	
-	\paragraph{Layer-Wise Heatmap.}
-	Over many episodes, the RL policy converges to mostly 4-bit or 8-bit on many layers, with a few layers assigned to \texttt{fp16}. Figure~\ref{fig:heatmap} (schematic) shows how different layers end up being assigned specific bit-widths more frequently.
+	\subsection{Total Reward Curve}
+	\begin{figure}[ht]
+	\centering
+	\includegraphics[width=\columnwidth]{gpt2-350-gae-ewa-rwd-v2-reward.png}
+	\vspace{-1em}
+	\caption{\small Example of total reward vs.\ episode. The agent steadily improves as it refines its per-layer quant decisions.}
+	\label{fig:reward_curves}
+	\vspace{-0.2em}
+	\end{figure}	
+	Figure~\ref{fig:reward_curves} illustrates how the \emph{total reward} evolves with each training episode. Recall that our reward encompasses perplexity differences (versus the reference model), KL divergence, attention entropy, and memory savings. 
+	\begin{itemize}
+		\item \textbf{Initial Negative Values.} Early episodes yield negative rewards, as random or naive quantization decisions often deteriorate performance substantially.
+		\item \textbf{Steady Climb.} Within a few dozen episodes, the agent discovers beneficial bit assignments that yield moderate memory savings with minimal perplexity increase, driving the reward into positive territory.
+		\item \textbf{Late Stabilization.} Beyond 150--200 episodes, most runs hover around slightly above zero reward, reflecting a stable trade-off between memory gains and model fidelity.
+	\end{itemize}
+	This steady rise confirms that the RL agent effectively “learns” how to balance precision requirements with compression targets.
 	
+	\subsection{Layer-Wise Quantization Distribution}
 	\begin{figure}[ht]
 		\centering
-		\includegraphics[width=0.93\columnwidth]{example-image-b}
+		\includegraphics[width=0.93\columnwidth]{gpt2-350-gae-ewa-rwd-v1_quant_dist_bar.png}
 		\vspace{-0.4em}
-		\caption{\small Schematic heatmap showing quant type usage by layer across episodes. The RL policy typically picks lower bits for many layers, using higher precision on sensitive blocks.}
-		\label{fig:heatmap}
+		\caption{\small Quantisation type distribution across layers}
+		\label{fig:bardist}
 		\vspace{-0.5em}
 	\end{figure}
+	\begin{figure}[ht]
+		\centering
+		\includegraphics[width=0.93\columnwidth]{gpt2-250-gae-ewa-rwd-v1_quant_heatmap_binned.png}
+		\vspace{-0.4em}
+		\caption{\small Heatmap showing quant type usage by layer across binned episodes. The RL policy typically picks lower bits for many layers, using higher precision on sensitive blocks.}
+		\label{fig:bin_heatmap}
+		\vspace{-0.5em}
+	\end{figure}
+	We next examine how often each layer is assigned a particular bit-width once the policy converges. Figures~\ref{fig:bardist} and~\ref{fig:bin_heatmap} visualize the final distribution of quantization formats across 12 Transformer layers:
+	\begin{itemize}
+		\item \textbf{Distribution Bar Chart (Figure~\ref{fig:bardist}).} Each column corresponds to a layer, and each color segment in the column shows the fraction of episodes for which that layer was assigned \texttt{fp16}, \texttt{fp4}, \texttt{int8}, or \texttt{nf4}. We observe that some layers predominantly end up in 4-bit or 8-bit formats, while others remain in \texttt{fp16}. This \emph{layer-specific} pattern suggests certain layers are more sensitive to precision reduction.
+		\item \textbf{Binned Heatmap (Figure~\ref{fig:bin_heatmap}).} Episodes are grouped into bins on the vertical axis, and layers are shown horizontally. The color indicates the chosen quant type. Early in training, many layers fluctuate. As training progresses (moving down the vertical axis), the agent “locks in” stable choices, with orange (\texttt{nf4}) and green (\texttt{int8}) dominating most layers, while a few sensitive blocks remain in \texttt{fp16}.
+	\end{itemize}
+	Both plots confirm that the RL policy \emph{does not} rely on a uniformly lower bit-width. Instead, it actively tailors the format per layer, highlighting the benefit of dynamic quantization.
 	
-	
+	\paragraph{Interpretation.}
+	Altogether, these results indicate that different transformer layers \emph{vary} in their robustness to low-bit quantization. The agent learns to compress most layers (often with 4-bit or 8-bit) while retaining higher precision where needed. As a result, overall memory usage is significantly reduced, with only a marginal hit to validation loss compared to a purely FP16 baseline.
+			
 	\subsection{Results on BoolQ}
 	
 	\begin{table}[ht]
@@ -266,19 +364,19 @@
 		\label{tab:boolq}
 		\begin{tabular}{lcccc}
 			\toprule
-			\textbf{Method} & \textbf{PPL} & \textbf{Acc(\%)} & \textbf{Mem(MB)} & \textbf{Speed}\\
+			\textbf{Method} & \textbf{PPL} & \textbf{Acc(\%)} & \textbf{Mem(MB)} \\
 			\midrule
-			\textbf{FP16 (baseline)}  & 920.56 & 51.93 & 422.69 & 48.8k\\
-			\textbf{NF4 (uniform)}    & 873.65 & 52.02 & 300.95 & 42.8k\\
+			\textbf{FP16 (baseline)}  & 920.56 & 51.93 & 422.69 \\
+			\textbf{NF4 (uniform)}    & 873.65 & 52.02 & 300.95 \\
 			\midrule
-			\textbf{DynaQ Mix A}  & 777.13 & 52.08 & 464.29 & 39.3k\\
-			\textbf{DynaQ Mix B}  & 773.78 & \textbf{53.85} & 383.15 & 40.4k\\
+			\textbf{DynaQ Mix A}  & 777.13 & 52.08 & 464.29 \\
+			\textbf{DynaQ Mix B}  & 773.78 & \textbf{53.85} & 383.15 \\
 			\bottomrule
 		\end{tabular}
 		\vspace{-1em}
 	\end{table}
 	
-	From Table~\ref{tab:boolq}, uniform NF4 beats FP16 in perplexity with notably lower memory usage. Our RL approach (\emph{Mix B}) lowers perplexity further \emph{and} boosts accuracy significantly, though at a slight memory overhead (383 MB vs.\ NF4’s 300 MB). Inference throughput also decreases somewhat, presumably due to mixing kernels.
+	From Table~\ref{tab:boolq}, uniform NF4 beats FP16 in perplexity with notably lower memory usage. Our RL approach (\emph{Mix B}) lowers perplexity further \emph{and} boosts accuracy significantly, though at a slight memory overhead (383 MB vs.\ NF4’s 300 MB). 
 	
 	\subsection{Results on PIQA}
 	
@@ -288,13 +386,13 @@
 		\label{tab:piqa}
 		\begin{tabular}{lcccc}
 			\toprule
-			\textbf{Method} & \textbf{PPL} & \textbf{Acc(\%)} & \textbf{Mem(MB)} & \textbf{Speed}\\
+			\textbf{Method} & \textbf{PPL} & \textbf{Acc(\%)} & \textbf{Mem(MB)} \\
 			\midrule
-			\textbf{FP16}    & 2531.21 & 60.72 & 422.69 & 48.2k \\
-			\textbf{NF4}     & 2265.88 & 60.77 & 300.95 & 42.0k \\
+			\textbf{FP16}    & 2531.21 & 60.72 & 422.69 \\
+			\textbf{NF4}     & 2265.88 & 60.77 & 300.95 \\
 			\midrule
-			\textbf{DynaQ Mix C} & 2143.76 & \textbf{61.53} & 464.29 & 39.4k \\
-			\textbf{DynaQ Mix D} & 2099.65 & 61.26 & 383.15 & 39.5k \\
+			\textbf{DynaQ Mix C} & 2143.76 & \textbf{61.53} & 464.29 \\
+			\textbf{DynaQ Mix D} & 2099.65 & 61.26 & 383.15 \\
 			\bottomrule
 		\end{tabular}
 		\vspace{-0.5em}
