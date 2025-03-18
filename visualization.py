@@ -22,8 +22,8 @@ def plot_layer_quantization(layer_bits, memory_saved, x_label, y_label1, y_label
     and a line showing memory saved.
 
     Parameters:
-    - layer_bits: List of lists (size: 250x12), each sublist contains quantization types per layer.
-    - memory_saved: List of 250 values representing memory saved per episode.
+    - layer_bits: List of lists, each sublist contains quantization types per layer.
+    - memory_saved: List of values representing memory saved per episode.
     - x_label: Label for the x-axis.
     - y_label1: Label for the primary y-axis (quantization distribution).
     - y_label2: Label for the secondary y-axis (memory saved).
@@ -42,7 +42,7 @@ def plot_layer_quantization(layer_bits, memory_saved, x_label, y_label1, y_label
     # Count each type per episode
     for episode_types in layer_bits:
         counts = Counter(episode_types)
-        total = len(episode_types)
+        total = len(episode_types)  # Total number of layers
         
         # Populate counts for each type, default to 0 if not present
         for dtype in unique_types:
@@ -94,6 +94,7 @@ def plot_layer_quantization(layer_bits, memory_saved, x_label, y_label1, y_label
     # Save the plot
     plt.savefig(save_path, bbox_inches='tight')
     print(f"Saved plot: {save_path}")
+    
 
 def plot_layer_distribution(layer_bits, x_label, y_label, title, save_path):
     """
@@ -109,7 +110,7 @@ def plot_layer_distribution(layer_bits, x_label, y_label, title, save_path):
     """
     fig, ax = plt.subplots(figsize=(12, 6))
     
-    num_layers = 12
+    num_layers = len(layer_bits[0])
     layers = range(num_layers)
     
     # Get unique data types from flattened layer_bits
@@ -484,8 +485,6 @@ def plot_binned_heatmap(layer_bits, bin_size, x_label, y_label, title, save_path
 def main():
     parser = argparse.ArgumentParser(description="Plot quantization and RL metrics from JSON data")
     parser.add_argument("json_file", type=str, help="Path to JSON file")
-    # parser.add_argument("quant_plot", type=str, help="Output path for quantization plot")
-    # parser.add_argument("ppo_plot", type=str, help="Output path for PPO loss plot")
     args = parser.parse_args()
 
     # Load data
@@ -506,7 +505,11 @@ def main():
         for pt in data
     ])
 
-   # Save PPO Loss Plot
+    # Get filename without extension and path
+    filename = args.json_file.split('/')[-1].split('.')[0]
+    output_dir = f"./report/images/{filename}"
+
+    # Save PPO Loss Plot
     plot_three_scales(
         reward, policy_loss, baseline_loss,
         x_label="Timesteps",
@@ -514,7 +517,7 @@ def main():
         y_label2="Reward",
         y_label3="Baseline Loss",
         title="PPO Loss, Reward, and Baseline Loss Over Time",
-        save_path="report/losses_plot.png"
+        save_path=f"{output_dir}/losses_plot.png"
     )
 
     # Save Layer Quantization Plot
@@ -524,7 +527,7 @@ def main():
         y_label1="Distribution of Quantization Types (%)",
         y_label2="Memory Saved (%)", 
         title="Layer-wise Quantization Types Distribution and Memory Saved Over Episodes",
-        save_path="report/layer_quantization_plot.png"
+        save_path=f"{output_dir}/layer_quantization_plot.png"
     )
 
     # Save Layer Distribution Plot
@@ -533,7 +536,7 @@ def main():
         x_label="Layer",
         y_label="Distribution of Quantization Types (%)",
         title="Quantization Type Distribution Across Layers",
-        save_path="report/layer_distribution_plot.png"
+        save_path=f"{output_dir}/layer_distribution_plot.png"
     )
 
     # Save Raw Heatmap
@@ -542,7 +545,7 @@ def main():
         x_label="Layer",
         y_label="Episode",
         title="Raw Quantization Types Heatmap",
-        save_path="report/raw_heatmap.png"
+        save_path=f"{output_dir}/raw_heatmap.png"
     )
 
     # Save Binned Heatmap
@@ -552,7 +555,7 @@ def main():
         x_label="Layer",
         y_label="Binned Quantization Types",
         title="Binned Quantization Types Heatmap",
-        save_path="report/binned_heatmap.png"
+        save_path=f"{output_dir}/binned_heatmap.png"
     )
 
 if __name__ == "__main__":
