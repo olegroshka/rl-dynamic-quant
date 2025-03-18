@@ -15,31 +15,41 @@ import subprocess
 def main():
     # 1) the list of datasets
     datasets = [
-        #"commonsense_qa",
+        "commonsense_qa",
         "boolq",
-        #"openbookqa",
+        "openbookqa",
         "piqa"
     ]
 
     # 2) the list of quantization schemas
-    quant_schemas = [
+    quant_schemas_gpt2 = [
         "['nf4', 'nf4', 'nf4', 'nf4', 'nf4', 'nf4', 'nf4', 'nf4', 'nf4', 'nf4', 'nf4', 'nf4']",
-        #"['int8', 'int8', 'int8', 'int8', 'int8', 'int8', 'int8', 'int8', 'int8', 'int8', 'int8', 'int8']",
+        "['int8', 'int8', 'int8', 'int8', 'int8', 'int8', 'int8', 'int8', 'int8', 'int8', 'int8', 'int8']",
         "['fp16', 'fp16', 'fp16', 'fp16', 'fp16', 'fp16', 'fp16', 'fp16', 'fp16', 'fp16', 'fp16', 'fp16']",
         "['fp16', 'int8', 'fp16', 'nf4', 'fp16', 'int8', 'fp16', 'int8', 'fp4', 'nf4', 'int8', 'fp4']",
-        #"['fp4', 'int8', 'fp4', 'nf4', 'fp16', 'fp4', 'fp4', 'fp4', 'nf4', 'nf4', 'fp16', 'nf4']",
+        "['fp4', 'int8', 'fp4', 'nf4', 'fp16', 'fp4', 'fp4', 'fp4', 'nf4', 'nf4', 'fp16', 'nf4']",
         "['fp16', 'nf4', 'nf4', 'nf4', 'nf4', 'int8', 'fp4', 'nf4', 'int8', 'nf4', 'nf4', 'nf4']", # gpt2-250-gae-ewa-rwd-v1
         "['fp16', 'nf4', 'nf4', 'fp16', 'nf4', 'nf4', 'nf4', 'int8', 'int8', 'nf4', 'nf4', 'fp4']" # gpt2-250-gae-ewa-rwd-v1
     ]
 
-    model_dir = "results/gpt-2-baseline"
+    quant_schemas_gpt2_medium = [
+        "['nf4', 'nf4', 'nf4', 'nf4', 'nf4', 'nf4', 'nf4', 'nf4', 'nf4', 'nf4', 'nf4', 'nf4', 'nf4', 'nf4', 'nf4', 'nf4', 'nf4', 'nf4', 'nf4', 'nf4', 'nf4', 'nf4', 'nf4', 'nf4']",
+        "['fp16', 'fp16', 'fp16', 'fp16', 'fp16', 'fp16', 'fp16', 'fp16', 'fp16', 'fp16', 'fp16', 'fp16', 'fp16', 'fp16', 'fp16', 'fp16', 'fp16', 'fp16', 'fp16', 'fp16', 'fp16', 'fp16', 'fp16', 'fp16']",
+        "['fp4', 'nf4', 'nf4', 'int8', 'nf4', 'nf4', 'fp16', 'fp4', 'fp4', 'nf4', 'fp4', 'nf4', 'nf4', 'nf4', 'nf4', 'nf4', 'fp4', 'int8', 'nf4', 'nf4', 'fp4', 'nf4', 'fp4', 'int8']",
+        "['fp4', 'fp4', 'nf4', 'nf4', 'nf4', 'fp4', 'nf4', 'nf4', 'nf4', 'nf4', 'fp4', 'nf4', 'nf4', 'int8', 'nf4', 'nf4', 'nf4', 'nf4', 'fp4', 'nf4', 'nf4', 'nf4', 'fp4', 'int8']",
+        "['fp4', 'nf4', 'fp4', 'nf4', 'nf4', 'nf4', 'nf4', 'nf4', 'nf4', 'nf4', 'nf4', 'nf4', 'fp4', 'nf4', 'nf4', 'nf4', 'fp4', 'nf4', 'nf4', 'nf4', 'nf4', 'nf4', 'nf4', 'fp16']"
+    ]
+
+
+    #model_dir = "results/gpt-2-baseline"
+    model_dir = "results/gpt2-medium-baseline"
 
     # 3) number of repeated runs per combination
     num_runs = 1
 
 
     for dataset in datasets:
-        for schema in quant_schemas:
+        for schema in quant_schemas_gpt2_medium:
             for run_idx in range(num_runs):
                 # Build the command to run
                 cmd = [
