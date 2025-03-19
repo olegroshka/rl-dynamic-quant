@@ -19,6 +19,7 @@
 % For tikz environment figure
 \usepackage{tikz}
 \usetikzlibrary{calc,arrows.meta,positioning,decorations.pathreplacing}
+\newcommand{\red}[1]{\textcolor{red}{#1}}
 
 
 
@@ -31,8 +32,11 @@
 	\icmltitle{DynaQuant: RL-Based Dynamic Quantization for Large Language Models}
 	
 	\begin{icmlauthorlist}
+		\red{
 		\icmlauthor{Oleg Roshka}{stanford}
 		\icmlauthor{Ilia Badanin}{epfl}
+		shouldn't I be mentioned as an invited collaborator
+		}
 	\end{icmlauthorlist}
 	
 	\icmlaffiliation{stanford}{Department of Computer Science, Stanford University, Stanford, CA, USA}
@@ -61,10 +65,10 @@
 	
 	We present \textbf{DynaQuant}, a reinforcement learning (RL) framework that \emph{sequentially} determines each layer's quantization scheme. Specifically:
 	\begin{enumerate}
-		\item We treat each layer as a step in an RL episode.
-		\item The RL agent selects one action from $\{\texttt{nf4}, \texttt{fp4}, \texttt{int8}, \texttt{fp16}\}$ for that layer.
-		\item After quantizing, we perform a short fine-tuning step on that partially quantized model to mitigate accuracy loss.
-		\item We compute a \emph{reward} that balances perplexity (vs.\ a reference model), KL divergence, attention entropy changes, and memory savings.
+		\item \red{We treat each layer as a step in an RL episode.}
+		\item \red{The RL agent selects one action from $\{\texttt{nf4}, \texttt{fp4}, \texttt{int8}, \texttt{fp16}\}$ for that layer.}
+		\item \red{After quantizing, we perform a short fine-tuning step on that partially quantized model to mitigate accuracy loss.}
+		\item \red{We compute a \emph{reward} that balances perplexity (vs.\ a reference model), KL divergence, attention entropy changes, and memory savings.}
 	\end{enumerate}
 	By the end of one \emph{episode} (quantizing all layers in sequence), we have a fully quantized model with a \emph{mixed-precision} assignment across layers.
 	
@@ -92,8 +96,8 @@
 		\item \textit{State} $s_i$: incorporates diverse features of the current model and layer. Specifically, we extract:
 		\begin{itemize}
 			\item \emph{Layer statistics:} mean and standard deviation of weights, gradient norms, and attention entropy for the layer being quantized.
-			\item \emph{Global signals:} the normalized layer index ($i/N$), current model perplexity, and perplexity deltas (how quantizing previous layers changed perplexity).
-			\item \emph{Previous layer's quantization choice:} encoded as a numeric ratio (e.g., bit-width divided by 16).
+			\item \emph{Global signals:} the normalized layer index $i$, current model perplexity, and perplexity deltas (how quantizing previous layers changed perplexity).
+			\item \emph{Previous layer's quantization choice:} encoded as a numeric ratio.
 			\item \emph{Exponential moving averages (EWAs):} we maintain running EWAs of key reward components (performance, KL, entropy, memory), smoothing the training signal over steps.
 		\end{itemize}
 		
@@ -101,7 +105,7 @@
 		
 		\item \textit{Transition}: we quantize layer $i$ in $\mathcal{M}_{\text{quant}}$, then apply \emph{short iterative fine-tuning} on both $\mathcal{M}_{\text{ref}}$ and $\mathcal{M}_{\text{quant}}$, using the \emph{identical} mini-batch for a fixed number of steps. This ensures the agent observes the immediate impact of quantizing that layer.
 		
-		\item \textit{Reward} $r_i$: once both models are briefly fine-tuned, we measure the resulting perplexities, KL divergence, attention entropy, and memory savings. These are combined (with EWAs) into a multi-term scalar reward. Notably, although we do not include direct "memory usage" in the state vector, the \emph{reward} reflects how many bits are saved by quantizing the current layer, weighted by that layer's fraction of total parameters.
+		\item \textit{Reward} $r_i$: once both models are briefly fine-tuned, we measure the resulting perplexities, KL divergence, attention entropy, and memory savings. These are combined (with EWAs) into a multi-term scalar reward. While memory usage is not directly encoded in the state representation, the \emph{reward} incorporates memory efficiency by considering the bits saved through quantization, scaled by the relative size of the current layer.
 	\end{enumerate}
 	
 	At the end of all $N$ layers, the environment signals the episode is complete and the PPO agent updates its policy using the collected trajectory. This cycle repeats until the agent converges on an effective per-layer quantization policy.
@@ -252,6 +256,7 @@
 		\item \textbf{BoolQ}: binary (yes/no) reading comprehension,
 		\item \textbf{PIQA}: a multiple-choice physical reasoning dataset.
 	\end{itemize}
+	\red{remove this part below}
 	Both are assessed on publicly available validation sets, where we measure:
 	\begin{enumerate}
 		\item \emph{Validation perplexity}, computed as the exponentiated mean cross-entropy over either the full or chunked sequences,
@@ -269,13 +274,7 @@
 	Our proposed \textbf{DynaQuant} uses a reinforcement learning policy to assign different bit-widths on a per-layer basis. After policy training, the layer-wise quantization scheme is finalized and applied to the reference model. The rest of the architecture and training data remain unchanged, ensuring a fair comparison with uniform baselines.
 	
 	\paragraph{Evaluation Procedure.}
-	We evaluate all models---FP16, NF4, and RL-based mixed precision---through the same pipeline:
-	\begin{enumerate}
-		\item \emph{Load} the final checkpoint (reference or quantized) into GPT-2, applying our quantization utilities where needed.
-		\item \emph{Compute} validation perplexity on the relevant dataset via token-level cross-entropy.
-		\item \emph{Measure} multiple-choice accuracy by scoring each candidate answer; the correct one is identified by the lowest average cross-entropy.
-		\item \emph{Record} inference throughput and peak memory usage with repeated forward passes on synthetic batches.
-	\end{enumerate}
+	We evaluate all models---FP16, NF4, and RL-based mixed precision---through the same pipeline. We load the final model checkpoint (either reference or quantized) into GPT-2 and apply our quantization utilities as needed. For evaluation, we calculate validation perplexity on the dataset using token-level cross-entropy. To assess multiple-choice accuracy, we score each candidate answer and select the one with the lowest average cross-entropy. Finally, we measure inference performance by recording throughput and peak memory usage across repeated forward passes using synthetic input batches.
 	
 	By standardizing the quantization routines, data preprocessing, and evaluation scripts across all settings, we ensure that any observed differences in performance or memory usage reflect genuine trade-offs arising from the chosen precision formats.
 	
@@ -285,6 +284,7 @@
 		\includegraphics[width=\columnwidth]{gpt2-500-gae-sig-ewa-rwd-v4-losses.png}
 		\vspace{-1em}
 		\caption{\small
+			\red{use a better graph. mention a model, \#epochs, dataset}
 			Three separate loss values over 500 training episodes:
 			\textbf{(blue)} the final validation loss (``final\_loss'') of the quantized model after each episode,
 			\textbf{(orange)} the policy loss (the PPO objective),
@@ -294,6 +294,7 @@
 	\end{figure}
 	
 	Figure~\ref{fig:loss_curves} tracks three distinct metrics logged each episode:
+	\red{this explanation is stupid; should be replaced.}
 	\begin{itemize}
 		\item \textbf{Final Validation Loss (Blue).} 
 		After each full episode (i.e., once all layers have been quantized), we compute the quantized model's validation loss (cross-entropy). 
@@ -320,23 +321,30 @@
 	\label{fig:reward_curves}
 	\vspace{-0.2em}
 	\end{figure}	
+	
+	\red{this explanation is stupid; should be merged with the previous part.}
+	
 	Figure~\ref{fig:reward_curves} illustrates how the \emph{total reward} evolves with each training episode. Recall that our reward encompasses perplexity differences (versus the reference model), KL divergence, attention entropy, and memory savings. 
+	
 	\begin{itemize}
 		\item \textbf{Initial Negative Values.} Early episodes yield negative rewards, as random or naive quantization decisions often deteriorate performance substantially.
 		\item \textbf{Steady Improvement.} Within a few dozen episodes, the agent discovers beneficial bit assignments that yield moderate memory savings with minimal perplexity increase, driving the reward into positive territory.
 		\item \textbf{Late Stabilization.} Beyond 150--200 episodes, most runs hover around slightly above zero reward, reflecting a stable trade-off between memory gains and model fidelity.
 	\end{itemize}
+	
 	This steady rise confirms that the RL agent effectively learns how to balance precision requirements with compression targets.
 	
 	\subsection{Layer-Wise Quantization Distribution}
+	
 	\begin{figure}[ht]
 		\centering
 		\includegraphics[width=0.93\columnwidth]{gpt2-350-gae-ewa-rwd-v1_quant_dist_bar.png}
 		\vspace{-0.4em}
-		\caption{\small Quantization type distribution across layers}
+		\caption{\small Quantization type distribution across layers \red{shouldd include more information}}
 		\label{fig:bardist}
 		\vspace{-0.5em}
 	\end{figure}
+	
 	\begin{figure}[ht]
 		\centering
 		\includegraphics[width=0.93\columnwidth]{gpt2-250-gae-ewa-rwd-v1_quant_heatmap_binned.png}
@@ -345,11 +353,14 @@
 		\label{fig:bin_heatmap}
 		\vspace{-0.5em}
 	\end{figure}
+	
 	We next examine how often each layer is assigned a particular bit-width once the policy converges. Figures~\ref{fig:bardist} and~\ref{fig:bin_heatmap} visualize the final distribution of quantization formats across 12 Transformer layers:
+	
 	\begin{itemize}
-		\item \textbf{Distribution Bar Chart (Figure~\ref{fig:bardist}).} Each column corresponds to a layer, and each color segment in the column shows the fraction of episodes for which that layer was assigned \texttt{fp16}, \texttt{fp4}, \texttt{int8}, or \texttt{nf4}. We observe that some layers predominantly end up in 4-bit or 8-bit formats, while others remain in \texttt{fp16}. This \emph{layer-specific} pattern suggests certain layers are more sensitive to precision reduction.
+		\item \textbf{Distribution Bar Chart (Figure~\ref{fig:bardist}).} Each column corresponds to a layer, and each color segment in the column shows the fraction of episodes for which that layer was assigned \texttt{fp16}, \texttt{fp4}, \texttt{int8}, or \texttt{nf4}. We observe that some layers predominantly end up in 4-bit or 8-bit formats, while others remain in \texttt{fp16}. This layer-specific pattern suggests certain layers are more sensitive to precision reduction.
 		\item \textbf{Binned Heatmap (Figure~\ref{fig:bin_heatmap}).} Episodes are grouped into bins on the vertical axis, and layers are shown horizontally. The color indicates the chosen quantization type. Early in training, many layers fluctuate. As training progresses (moving down the vertical axis), the agent "locks in" stable choices, with orange (\texttt{nf4}) and green (\texttt{int8}) dominating most layers, while a few sensitive blocks remain in \texttt{fp16}.
 	\end{itemize}
+	
 	Both plots confirm that the RL policy \emph{does not} rely on a uniformly lower bit-width. Instead, it actively tailors the format per layer, highlighting the benefit of dynamic quantization.
 	
 	\paragraph{Interpretation.}
@@ -358,26 +369,25 @@
 	
 	\section{Results}
 	
-	%----------------------------------------------
+	\red{can you elaborate on what the mix A, B, C, D are?}
+	
 	\subsection{Results on BoolQ (GPT-2 Small)}
-	\label{sec:boolq-small}
 	
 	\begin{table}[ht]
-		\centering
-		\caption{\small \textbf{BoolQ} (GPT-2 Small, Validation). The first two rows are uniform baselines. The remaining rows are learned DynaQuant \emph{mixed} schemes.}
+		\centering		
 		\label{tab:boolq-small}
 		\begin{tabular}{lcccc}
 			\toprule
-			\textbf{Method} & \textbf{PPL} & \textbf{Acc(\%)} & \textbf{Mem(MB)} \\
+			\textbf{Method} & \textbf{PPL}$\downarrow$ & \textbf{Acc(\%)}$\uparrow$ & \textbf{Mem(MB)}$\downarrow$ \\
 			\midrule
 			\textbf{FP16 (baseline)}  & 920.56 & 51.93 & 422.69 \\
-			\textbf{NF4 (uniform)}    & 873.65 & 52.02 & 300.95 \\
+			\textbf{NF4 (uniform)}    & 873.65 & 52.02 & \textbf{300.95} \\
 			\midrule
 			\textbf{DynaQ Mix A}      & 777.13 & 52.08 & 464.29 \\
-			\textbf{DynaQ Mix B}      & 773.78 & \textbf{53.85} & 383.15 \\
+			\textbf{DynaQ Mix B}      & \textbf{773.78} & \textbf{53.85} & 383.15 \\
 			\bottomrule
 		\end{tabular}
-		\vspace{-1em}
+		\caption{\small BoolQ validation results for GPT-2 Small. The first two rows show uniform quantization baselines (FP16 and NF4). The remaining rows demonstrate our learned DynaQuant mixed-precision schemes that adaptively quantize different layers.}
 	\end{table}
 	
 	\paragraph{Observations for GPT-2 Small on BoolQ.}
@@ -385,24 +395,22 @@
 	
 	%----------------------------------------------
 	\subsection{Results on PIQA (GPT-2 Small)}
-	\label{sec:piqa-small}
 	
 	\begin{table}[ht]
 		\centering
-		\caption{\small \textbf{PIQA} (GPT-2 Small, Validation). The first two rows are uniform baselines. The remaining are RL-based mixed.}
 		\label{tab:piqa-small}
 		\begin{tabular}{lcccc}
 			\toprule
-			\textbf{Method} & \textbf{PPL} & \textbf{Acc(\%)} & \textbf{Mem(MB)} \\
+			\textbf{Method} & \textbf{PPL}$\downarrow$ & \textbf{Acc(\%)}$\uparrow$ & \textbf{Mem(MB)}$\downarrow$ \\
 			\midrule
 			\textbf{FP16}    & 2531.21 & 60.72 & 422.69 \\
-			\textbf{NF4}     & 2265.88 & 60.77 & 300.95 \\
+			\textbf{NF4}     & 2265.88 & 60.77 & \textbf{300.95} \\
 			\midrule
 			\textbf{DynaQ Mix C} & 2143.76 & \textbf{61.53} & 464.29 \\
-			\textbf{DynaQ Mix D} & 2099.65 & 61.26 & 383.15 \\
+			\textbf{DynaQ Mix D} & \textbf{2099.65} & 61.26 & 383.15 \\
 			\bottomrule
 		\end{tabular}
-		\vspace{-0.5em}
+		\caption{\small PIQA validation results for GPT-2 Small. The first two rows show uniform quantization baselines (FP16 and NF4). The remaining rows demonstrate our learned DynaQuant mixed-precision schemes.}
 	\end{table}
 	
 	\paragraph{Observations for GPT-2 Small on PIQA.}
@@ -410,25 +418,23 @@
 	
 	%----------------------------------------------
 	\subsection{Results on BoolQ (GPT-2 Medium)}
-	\label{sec:boolq-medium}
 	
 	\begin{table}[ht]
 		\centering
-		\caption{\small \textbf{BoolQ} (GPT-2 Medium, Validation). The first two rows are uniform baselines; the remaining rows are RL-based mixed schemes.}
 		\label{tab:boolq-medium}
 		\begin{tabular}{lcccc}
 			\toprule
-			\textbf{Method} & \textbf{PPL} & \textbf{Acc(\%)} & \textbf{Mem(MB)} \\
+			\textbf{Method} & \textbf{PPL}$\downarrow$ & \textbf{Acc(\%)}$\uparrow$ & \textbf{Mem(MB)}$\downarrow$ \\
 			\midrule
 			\textbf{FP16 (baseline)}  & 1009.31 & 54.22 & 956.26 \\
-			\textbf{NF4 (uniform)}    & 953.16  & 54.53 & 513.04 \\
+			\textbf{NF4 (uniform)}    & \textbf{953.16}  & 54.53 & 513.04 \\
 			\midrule
 			\textbf{DynaQ Mix A}      & 1094.60 & \textbf{54.80} & 694.23 \\
 			\textbf{DynaQ Mix B}      & 1091.37 & 54.71 & 622.10 \\
-			\textbf{DynaQ Mix C}      & 978.64  & 54.71 & 532.71 \\
+			\textbf{DynaQ Mix C}      & 978.64  & 54.71 & \textbf{532.71} \\
 			\bottomrule
 		\end{tabular}
-		\vspace{-1em}
+		\caption{\small BoolQ validation results for GPT-2 Medium. The first two rows show uniform quantization baselines (FP16 and NF4). The remaining rows demonstrate our learned DynaQuant mixed-precision schemes.}
 	\end{table}
 	
 	\paragraph{Observations for GPT-2 Medium on BoolQ.}
@@ -436,32 +442,29 @@
 	
 	%----------------------------------------------
 	\subsection{Results on PIQA (GPT-2 Medium)}
-	\label{sec:piqa-medium}
-	
+		
 	\begin{table}[ht]
 		\centering
-		\caption{\small \textbf{PIQA} (GPT-2 Medium, Validation). The first two rows are uniform baselines. The remaining rows are RL-based mixed schemes.}
 		\label{tab:piqa-medium}
 		\begin{tabular}{lcccc}
 			\toprule
-			\textbf{Method} & \textbf{PPL} & \textbf{Acc(\%)} & \textbf{Mem(MB)} \\
+			\textbf{Method} & \textbf{PPL}$\downarrow$ & \textbf{Acc(\%)}$\uparrow$ & \textbf{Mem(MB)}$\downarrow$ \\
 			\midrule
-			\textbf{FP16 (baseline)} & 5791.41 & 64.58 & 956.26 \\
+			\textbf{FP16 (baseline)} & 5791.41 & \textbf{64.58} & 956.26 \\
 			\textbf{NF4 (uniform)}   & 4932.96 & 64.53 & 513.04 \\
 			\midrule
 			\textbf{DynaQ Mix A}     & 5399.04 & 64.42 & 694.23 \\
 			\textbf{DynaQ Mix B}     & 5493.03 & 63.71 & 622.10 \\
-			\textbf{DynaQ Mix C}     & 4894.23 & 64.36 & 532.71 \\
+			\textbf{DynaQ Mix C}     & \textbf{4894.23} & 64.36 & \textbf{532.71} \\
 			\bottomrule
 		\end{tabular}
-		\vspace{-1em}
+		\caption{\small PIQA validation results for GPT-2 Medium. The first two rows show uniform quantization baselines (FP16 and NF4). The remaining rows demonstrate our learned DynaQuant mixed-precision schemes.}
 	\end{table}
 	
 	
 	\textbf{}
 	\\
-	\small{Refer to Appendix~\ref{sec:appendix-schemas} for the specific mixed quantization schemas that were evaluated.}
-	
+	\small{Refer to Appendix~\ref{sec:appendix-schemas} for the specific mixed quantization final schemas that were evaluated.}
 	
 	\paragraph{Observations for GPT-2 Medium on PIQA.}
 	Table~\ref{tab:piqa-medium} shows uniform NF4 significantly reduces perplexity from 5791.41 to 4932.96 (vs.\ FP16) while nearly matching FP16's accuracy (64.53\% vs.\ 64.58\%). Among the RL-based mixes, \emph{Mix C} achieves the lowest perplexity (4894.23) at a moderate memory cost (532.71~MB), albeit with a slight dip in accuracy (64.36\%). Overall, the same pattern emerges: selectively using higher precision for a subset of layers can yield attractive trade-offs compared to purely uniform quantization.
@@ -469,11 +472,7 @@
 	%----------------------------------------------
 	\subsection{Evaluation Analysis}
 	
-	As shown in Tables~\ref{tab:boolq-small} and \ref{tab:piqa-small} (GPT-2 Small) and Tables~\ref{tab:boolq-medium} and \ref{tab:piqa-medium} (GPT-2 Medium), uniform NF4 is a strong baseline—often outperforming or matching FP16 in perplexity while reducing memory usage by up to 50\%. With our RL-based \emph{DynaQuant}, we see further perplexity gains or slight accuracy boosts by mixing bit-width formats. On the smaller GPT-2 model, \emph{Mix B} or \emph{Mix C} often yield the best accuracy, while \emph{Mix D} provides a compromise in memory overhead. For the larger GPT-2 Medium, certain mixes (e.g., \emph{Mix C}) maintain or improve perplexity with minimal memory overhead compared to NF4 alone.
-	
-	Our results illustrates that many final learned configurations keep the initial and final Transformer layers in higher precision (FP16), aggressively compressing middle layers with NF4 or INT8. This is consistent with prior observations \cite{wendler2024llamas} that middle layers often handle more abstract representations, which may be less sensitive to reduced precision.
-	
-	Our results illustrate that many final learned configurations keep the initial and final Transformer layers in higher precision (FP16), while aggressively compressing middle layers with NF4 or INT8. This pattern is consistent with prior observations \cite{wendler2024llamas} that middle layers often handle more abstract representations, making them less sensitive to reduced precision.
+	As shown in Tables~\ref{tab:boolq-small} and \ref{tab:piqa-small} (GPT-2 Small) and Tables~\ref{tab:boolq-medium} and \ref{tab:piqa-medium} (GPT-2 Medium), uniform NF4 is a strong baseline—often outperforming or matching FP16 in perplexity while reducing memory usage by up to 50\%. With our RL-based \emph{DynaQuant}, we see further perplexity gains or slight accuracy boosts by mixing bit-width formats. On the smaller GPT-2 model, \emph{Mix B} or \emph{Mix C} often yield the best accuracy, while \emph{Mix D} provides a compromise in memory overhead. For the larger GPT-2 Medium, certain mixes (e.g., \emph{Mix C}) maintain or improve perplexity with minimal memory overhead compared to NF4 alone. Our results in Appendix~\ref{sec:appendix-schemas} illustrate that many final learned configurations keep the initial and final Transformer layers in higher precision (FP16), while aggressively compressing middle layers with 4-bit parameters.
 	
 	\textbf{Note on Memory Usage.} Although one might expect a strictly lower overall memory footprint from mixed precision, we occasionally observe peak memory usage exceeding the purely FP16 baseline. This is due in part to overhead from kernel implementations that temporarily cast INT8 to FP32 in certain GPU libraries,\footnote{ For example, in some PyTorch versions or GPU driver stacks, INT8 GEMM kernels still allocate intermediate FP32 buffers, leading to short-lived (but increased) peak memory usage compared to uniform FP16.} as well as extra tensors stored during fine-tuning. In practice, these overheads do not necessarily reflect parameter storage size but rather transitory usage during forward/backward passes.
 	
@@ -527,7 +526,7 @@
 	{\small % Use \small or \footnotesize if desired
 		
 		Below we list all per-layer quantization assignments discovered by \textbf{DynaQuant} 
-		for each “Mix A/B/C/D” in the main text. Each bracketed list shows
+		for each mix in the main text. Each bracketed list shows
 		the formats from layer 0 up to layer \(N-1\).
 		
 		\begin{itemize}
@@ -574,7 +573,6 @@
 				\texttt{[fp4, nf4, fp4, nf4, nf4, nf4, nf4, nf4, nf4, nf4, nf4, nf4, fp4, nf4, nf4, nf4, fp4, nf4, nf4, nf4, nf4, nf4, nf4, fp16]}
 			\end{itemize}
 		\end{itemize}
-		
 	} % end \small				
 	
 	\section{Additional GPT-2 Medium Visualizations}
@@ -614,6 +612,8 @@
 	
 	\subsection{Binned Quantization Heatmap}
 	\label{sec:medium-heatmap}
+
+	\red{explain what binned means here. include the original non-binned heatmap as well.}
 	
 	\begin{figure}[ht]
 		\centering
