@@ -1,3 +1,4 @@
+import os 
 import json
 import matplotlib.pyplot as plt
 import numpy as np
@@ -5,7 +6,6 @@ import seaborn as sns
 import argparse
 from collections import Counter
 import pandas as pd
-from collections import defaultdict
 
 
 def load_data(file_path):
@@ -508,6 +508,9 @@ def main():
     # Get filename without extension and path
     filename = args.json_file.split('/')[-1].split('.')[0]
     output_dir = f"./report/images/{filename}"
+    
+    # Create output directory if it doesn't exist
+    os.makedirs(output_dir, exist_ok=True)
 
     # Save PPO Loss Plot
     plot_three_scales(
