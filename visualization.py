@@ -514,7 +514,7 @@ def main():
 
     # Save PPO Loss Plot
     plot_three_scales(
-        reward, policy_loss, baseline_loss,
+        policy_loss, reward, baseline_loss,
         x_label="Timesteps",
         y_label1="PPO Loss",
         y_label2="Reward",
