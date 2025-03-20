@@ -44,20 +44,18 @@
 
 \title{Dynamic Quantization of LLMs via Reinforcement Learning (DynaQuant)}
 
+\author{Oleg Roshka\inst{1}, Ilia Badanin\inst{2,*}}
+\institute{\inst{1} Department of Computer Science, Stanford University \quad \inst{2} School of Computer and Communication Sciences, EPFL \quad \inst{*} Invited Collaborator}
 
-\author{Oleg Roshka\inst{1}}
-
-\institute[shortinst]{\inst{1} Department of Computer Science}
-\institute[shortinst]{\inst{1} Computer Science, Stanford}
 
 % ====================
 % Footer (optional)
 % ====================
 
 \footercontent{
-	\href{https://github.com/olegroshka/rl-dynamic-quant}{github repo link} \hfill  % Replace with your repo
+	\href{https://github.com/olegroshka/rl-dynamic-quant}{github repo link} \hfill  % Replace with your repo
 	CS 234 (2025 Winter) Final Project Poster Session \hfill
-	\href{mailto:oros@stanford.edu}{oros@stanford.edu}}  % Replace with your email
+	\href{mailto:oros@stanford.edu}{oros@stanford.edu}, \href{mailto:ilia.badanin@epfl.ch}{ilia.badanin@epfl.ch}}  % Replace with your email
 % (can be left out to remove footer)
 
 % ====================
@@ -120,42 +118,24 @@
 				
 				
 				\begin{block}{Reinforcement Learning Environment}
-										
-					\begin{figure}[ht]
-						\centering
-						\begin{tikzpicture}[>=latex,scale=1.4, every node/.style={transform shape}]
-							% Nodes
-							\node[draw, rectangle, minimum width=3.2cm, minimum height=1.2cm] (quantmodel) {\textbf{Quantized Model}};
-							\node[draw, rectangle, right=1.8cm of quantmodel, minimum width=2.8cm, minimum height=1.2cm] (agent) {\textbf{RL Agent}};
-							\node[draw, rectangle, below=1.3cm of agent, minimum width=2.5cm, minimum height=1.0cm] (eval) {Evaluate Loss/PPL};
-							
-							\node[draw, rectangle, fill=gray!20, minimum width=3.0cm, minimum height=1.2cm, left=1.8cm of quantmodel] (ref) {\textbf{Episodic Ref. Model}};
-							\node[draw, rectangle, below=1.3cm of ref, minimum width=3.0cm, minimum height=1.2cm] (quant) {Apply Quant Type};
-							
-							% Arrows
-							\draw[->, thick] (quantmodel) -- node[above]{\small state} (agent);
-							\draw[->, thick] (agent) -- node[left]{\small act (qtype)} (quant);
-							\draw[->, thick] (quant) -- node[left]{\small modify} (quantmodel);
-							\draw[->, thick] (ref) -- node[right]{\small ref ppl} (eval);
-							\draw[->, thick] (quantmodel) -- node[right]{\small quant ppl} (eval);
-							\draw[->, thick] (eval) -- node[right]{\small reward} (agent);
-							
-							% Optional brace grouping: Fine-tuning
-							\draw[decorate, decoration={brace, amplitude=10pt}]
-							($(ref.north west)+(0.0,0.1)$) -- ($(quantmodel.north east)+(0.0,0.1)$)
-							node[midway, above=6pt]{\small Fine-tune Both Models per Layer};
-						\end{tikzpicture}
-						\caption{RL-based dynamic quantization loop. Agent picks a quant type for the current layer, then fine-tunes and compares performance (losses/perplexities).}
-					\end{figure}
-					
-					\begin{itemize}
-						\item \textbf{State:} Layer statistics (weight mean/std, gradient norm, attention entropy), current layer index, previous layer's quantization, and EMA of rewards.
-						\item \textbf{Action:} Choice of quantization type: \{`nf4`, `fp4`, `int8`, `fp16`, `bf16`, `fp32`\}.
-						\item \textbf{Reward:} Combination of perplexity difference (sigmoid-shaped), KL divergence, attention entropy difference, and memory savings.
-						\item \textbf{Episode:} Quantizing all layers of the model sequentially.
-						\item \textbf{Adaptive Fine-tuning:} Crucially, we fine-tune \emph{both} the quantized model \emph{and} an episodic reference model after \emph{each} layer's quantization, using \emph{identical} training data, for a fixed number of steps. This captures the dynamic impact of quantization.
-					\end{itemize}
-					
+					\begin{columns}[T]
+						\begin{column}{0.6\linewidth}
+							\begin{figure}[ht]
+								\centering
+								\includegraphics[width=\linewidth]{dynaq-scheme.png}
+								\caption{RL-based dynamic quantization loop. Agent picks a quant type for the current layer, then fine-tunes and compares performance (losses/perplexities).}
+							\end{figure}
+						\end{column}
+						\begin{column}{0.4\linewidth}
+							\begin{itemize}
+								\item \textbf{State:} Layer statistics (weight mean/std, gradient norm, attention entropy), current layer index, previous layer's quantization, and EMA of rewards.
+								\item \textbf{Action:} Choice of quantization type: \{`nf4`, `fp4`, `int8`, `fp16`, `bf16`, `fp32`\}.
+								\item \textbf{Reward:} Combination of perplexity difference (sigmoid-shaped), KL divergence, attention entropy difference, and memory savings.
+								\item \textbf{Episode:} Quantizing all layers of the model sequentially.
+								\item \textbf{Adaptive Fine-tuning:} Crucially, we fine-tune \emph{both} the quantized model \emph{and} an episodic reference model after \emph{each} layer's quantization, using \emph{identical} training data, for a fixed number of steps. This captures the dynamic impact of quantization.
+							\end{itemize}
+						\end{column}
+					\end{columns}
 				\end{block}
 				
 			\end{column}
@@ -231,23 +211,23 @@
 					\vspace{-0.6em}
 					\begin{figure}[ht]
 						\centering
-						\begin{subfigure}[b]{0.32\linewidth}
-							\includegraphics[width=\linewidth]{gpt-2-EAQ-500-v2-reward.png}
-							\caption{\small Total RL reward over episodes.}
-						\end{subfigure}
-						\hfill
-						\begin{subfigure}[b]{0.32\linewidth}
-							\includegraphics[width=\linewidth]{gpt2-500-gae-sig-ewa-rwd-v2-losses.png}
-							\caption{\small Validation loss.}
-						\end{subfigure}
-						\hfill
 						\begin{subfigure}[b]{0.3\linewidth}
-							\includegraphics[width=\linewidth]{gpt2-250-gae-sig-ewa-rwd-v6_quant_heatmap_binned.png}
-							\caption{\small Dist. of quant types by layer.}
+							\includegraphics[width=\linewidth]{layer_quantization_plot.png}
+							\caption{\small Quantization types distribution and memory savings over episodes.}
+						\end{subfigure}
+						\hfill
+						\begin{subfigure}[b]{0.32\linewidth}
+							\includegraphics[width=\linewidth]{losses_plot.png}
+							\caption{\small Training metrics over episodes: reward, PPO loss, and baseline loss.}
+						\end{subfigure}
+						\hfill
+						\begin{subfigure}[b]{0.27\linewidth}
+							\includegraphics[width=\linewidth]{binnobin.png}
+							\caption{\small Binned quantization of layers across 100 episodes}
 							\label{subfig:reward_trend}
 						\end{subfigure}
 						
-						\caption{\small The RL reward grows over episodes, and the quantized model’s validation loss stays near reference. The distribution of quantization types across layers during training.}
+						\caption{\small The evolution of quantization types over episodes in the training phase, the plots show the trade-off between memory savings and PPO loss - as memory savings increase, the PPO loss tends to increase as well, but the reward overall increases.}
 						\label{fig:training_plots}
 					\end{figure}					
 				\end{block}
