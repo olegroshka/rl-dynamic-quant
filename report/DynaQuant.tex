@@ -275,53 +275,33 @@
 	By standardizing the quantization routines, data preprocessing, and evaluation scripts across all settings, we ensure that any observed differences in performance or memory usage reflect genuine trade-offs arising from the chosen precision formats.
 	
 	\subsection{Loss Metrics}
+
 	\begin{figure}[ht]
 		\centering
-		\includegraphics[width=\columnwidth]{gpt2-500-gae-sig-ewa-rwd-v4-losses.png}
+		\includegraphics[width=\columnwidth]{images/gpt2-500-gae-sig-ewa-rwd-v4/losses_plot.png}
 		\vspace{-1em}
 		\caption{\small
-			Three separate loss values over 500 training episodes (GPT2 small):
-			\textbf{(blue)} the final validation loss (``final\_loss'') of the quantized model after each episode,
-			\textbf{(orange)} the policy loss (the PPO objective),
-			\textbf{(green)} the baseline loss (the value function’s MSE).}
+			Three metrics plotted on different scales:
+			\textbf{(blue)} total reward,
+			\textbf{(orange)} PPO policy loss,
+			\textbf{(green)} baseline loss.}
 		\label{fig:loss_curves}
 		\vspace{-0.2em}
 	\end{figure}
 	
-	Figure~\ref{fig:loss_curves} tracks three distinct metrics logged each episode:
+	Figure~\ref{fig:loss_curves} tracks three key metrics throughout training, each plotted on its own scale:
 	\begin{itemize}
-		\item \textbf{Final Validation Loss (Blue).} 
-		After each full episode (i.e., once all layers have been quantized), we compute the quantized model's validation loss (cross-entropy). 
-		In our runs, this loss remains close to zero or very small on the chosen scale, indicating the model’s performance does not degrade severely despite aggressive mixed-precision.
+		\item \textbf{Total Reward (Blue).} 
+		This represents the cumulative reward per episode, combining perplexity, KL divergence, attention entropy, and memory savings terms. After initial exploration, it stabilizes around 38, indicating the agent has found a consistently effective quantization strategy.
 		
 		\item \textbf{Policy Loss (Orange).} 
-		This is the PPO objective we optimize when updating the quantization policy. 
-		It typically fluctuates early on as the agent explores different quantization schemes, then settles near zero, suggesting the policy has converged to stable decisions.
+		The PPO objective oscillates near zero throughout training. These small fluctuations suggest the policy updates are stable and the agent maintains its learned quantization preferences while still allowing minor refinements.
 		
 		\item \textbf{Baseline Loss (Green).}		
-		This is the MSE of the “baseline network” used in PPO to estimate state values. 
-		We see it starts high, briefly spikes, and then gradually decreases, reflecting the baseline’s learning to predict returns more accurately over time.
+		The value function's MSE starts very high (~400) but drops sharply and continues declining throughout training. This shows the baseline network steadily improves at predicting expected returns, helping reduce variance in the policy updates.
 	\end{itemize}
 	
-	In summary, the orange policy loss and blue final loss both end near zero, while the green baseline loss steadily declines from large initial values. 
-	This pattern indicates that \emph{(1)} the quantization policy stabilizes, \emph{(2)} the value-function baseline converges, and \emph{(3)} the final quantized model maintains strong performance (low validation loss). 
-		
-	\subsection{Total Reward Curve}
-	\begin{figure}[ht]
-	\centering
-	\includegraphics[width=\columnwidth]{gpt2-350-gae-ewa-rwd-v2-reward.png}
-	\vspace{-1em}
-	\caption{\small Example of total reward vs.\ episode (GPT2 small). The agent steadily improves as it refines its per-layer quantization decisions.}
-	\label{fig:reward_curves}
-	\vspace{-0.2em}
-	\end{figure}	
-	Figure~\ref{fig:reward_curves} illustrates how the \emph{total reward} evolves with each training episode. Recall that our reward encompasses perplexity differences (versus the reference model), KL divergence, attention entropy, and memory savings. 
-	\begin{itemize}
-		\item \textbf{Initial Negative Values.} Early episodes yield negative rewards, as random or naive quantization decisions often deteriorate performance substantially.
-		\item \textbf{Steady Improvement.} Within a few dozen episodes, the agent discovers beneficial bit assignments that yield moderate memory savings with minimal perplexity increase, driving the reward into positive territory.
-		\item \textbf{Late Stabilization.} Beyond 150--200 episodes, most runs hover around slightly above zero reward, reflecting a stable trade-off between memory gains and model fidelity.
-	\end{itemize}
-	This steady rise confirms that the RL agent effectively learns how to balance precision requirements with compression targets.
+	The distinct scales and trajectories of these metrics provide complementary views of the training process: the reward shows the agent's improving performance, the policy loss indicates stable learning, and the baseline loss demonstrates effective value estimation. Together, they suggest the RL approach successfully converges to an effective quantization policy.
 	
 	\subsection{Layer-Wise Quantization Distribution}
 	\begin{figure}[ht]

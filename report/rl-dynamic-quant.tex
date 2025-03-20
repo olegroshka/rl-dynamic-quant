@@ -283,7 +283,7 @@
 			Three separate loss values over 500 training episodes (GPT2 small):
 			\textbf{(blue)} the final validation loss (``final\_loss'') of the quantized model after each episode,
 			\textbf{(orange)} the policy loss (the PPO objective),
-			\textbf{(green)} the baseline loss (the value function’s MSE).}
+			\textbf{(green)} the baseline loss (the value function's MSE).}
 		\label{fig:loss_curves}
 		\vspace{-0.2em}
 	\end{figure}
@@ -425,7 +425,7 @@
 		\end{tabular}
 		\caption{\small BoolQ validation results for GPT-2 Medium. The first two rows show uniform quantization baselines (FP16 and NF4). The remaining rows demonstrate our learned DynaQuant mixed-precision schemes.}
 	\end{table}
-	
+
 	\paragraph{Observations for GPT-2 Medium on BoolQ.}
 	As in the smaller model, uniform NF4 beats FP16 in perplexity (953.16 vs.\ 1009.31) at about half the memory footprint (513~MB vs.\ 956~MB). Several mixes (e.g., Mix A) slightly boost accuracy to 54.80\% but can raise memory usage. Notably, Mix C dips below the uniform NF4 perplexity (978.64 vs.\ 953.16) but remains comparable in accuracy.
 	
@@ -443,7 +443,7 @@
 			\textbf{NF4 (uniform)}   & 4932.96 & 64.53 & 513.04 \\
 			\midrule
 			\textbf{DynaQ Mix A}     & 5399.04 & 64.42 & 694.23 \\
-			\textbf{DynaQ Mix B}     & 5493.03 & 63.71 & 622.10 \\
+			\textbf{DynaQ Mix B}     & 5493.03 & 63.71 k& 622.10 \\
 			\textbf{DynaQ Mix C}     & \textbf{4894.23} & 64.36 & \textbf{532.71} \\
 			\bottomrule
 		\end{tabular}
