@@ -361,24 +361,22 @@
 	
 	%----------------------------------------------
 	\subsection{Results on BoolQ (GPT-2 Small)}
-	\label{sec:boolq-small}
 	
 	\begin{table}[ht]
-		\centering
-		\caption{\small \textbf{BoolQ} (GPT-2 Small, Validation). The first two rows are uniform baselines. The remaining rows are learned DynaQuant \emph{mixed} schemes.}
+		\centering		
 		\label{tab:boolq-small}
 		\begin{tabular}{lcccc}
 			\toprule
-			\textbf{Method} & \textbf{PPL} & \textbf{Acc(\%)} & \textbf{Mem(MB)} \\
+			\textbf{Method} & \textbf{PPL}$\downarrow$ & \textbf{Acc(\%)}$\uparrow$ & \textbf{Mem(MB)}$\downarrow$ \\
 			\midrule
 			\textbf{FP16 (baseline)}  & 920.56 & 51.93 & 422.69 \\
-			\textbf{NF4 (uniform)}    & 873.65 & 52.02 & 300.95 \\
+			\textbf{NF4 (uniform)}    & 873.65 & 52.02 & \textbf{300.95} \\
 			\midrule
 			\textbf{DynaQ Mix A}      & 777.13 & 52.08 & 464.29 \\
-			\textbf{DynaQ Mix B}      & 773.78 & \textbf{53.85} & 383.15 \\
+			\textbf{DynaQ Mix B}      & \textbf{773.78} & \textbf{53.85} & 383.15 \\
 			\bottomrule
 		\end{tabular}
-		\vspace{-1em}
+		\caption{\small BoolQ validation results for GPT-2 Small. The first two rows show uniform quantization baselines (FP16 and NF4). The remaining rows demonstrate our learned DynaQuant mixed-precision schemes that adaptively quantize different layers.}
 	\end{table}
 	
 	\paragraph{Observations for GPT-2 Small on BoolQ.}
@@ -386,24 +384,22 @@
 	
 	%----------------------------------------------
 	\subsection{Results on PIQA (GPT-2 Small)}
-	\label{sec:piqa-small}
 	
 	\begin{table}[ht]
 		\centering
-		\caption{\small \textbf{PIQA} (GPT-2 Small, Validation). The first two rows are uniform baselines. The remaining are RL-based mixed.}
 		\label{tab:piqa-small}
 		\begin{tabular}{lcccc}
 			\toprule
-			\textbf{Method} & \textbf{PPL} & \textbf{Acc(\%)} & \textbf{Mem(MB)} \\
+			\textbf{Method} & \textbf{PPL}$\downarrow$ & \textbf{Acc(\%)}$\uparrow$ & \textbf{Mem(MB)}$\downarrow$ \\
 			\midrule
 			\textbf{FP16}    & 2531.21 & 60.72 & 422.69 \\
-			\textbf{NF4}     & 2265.88 & 60.77 & 300.95 \\
+			\textbf{NF4}     & 2265.88 & 60.77 & \textbf{300.95} \\
 			\midrule
 			\textbf{DynaQ Mix C} & 2143.76 & \textbf{61.53} & 464.29 \\
-			\textbf{DynaQ Mix D} & 2099.65 & 61.26 & 383.15 \\
+			\textbf{DynaQ Mix D} & \textbf{2099.65} & 61.26 & 383.15 \\
 			\bottomrule
 		\end{tabular}
-		\vspace{-0.5em}
+		\caption{\small PIQA validation results for GPT-2 Small. The first two rows show uniform quantization baselines (FP16 and NF4). The remaining rows demonstrate our learned DynaQuant mixed-precision schemes.}
 	\end{table}
 	
 	\paragraph{Observations for GPT-2 Small on PIQA.}
@@ -411,25 +407,23 @@
 	
 	%----------------------------------------------
 	\subsection{Results on BoolQ (GPT-2 Medium)}
-	\label{sec:boolq-medium}
 	
 	\begin{table}[ht]
 		\centering
-		\caption{\small \textbf{BoolQ} (GPT-2 Medium, Validation). The first two rows are uniform baselines; the remaining rows are RL-based mixed schemes.}
 		\label{tab:boolq-medium}
 		\begin{tabular}{lcccc}
 			\toprule
-			\textbf{Method} & \textbf{PPL} & \textbf{Acc(\%)} & \textbf{Mem(MB)} \\
+			\textbf{Method} & \textbf{PPL}$\downarrow$ & \textbf{Acc(\%)}$\uparrow$ & \textbf{Mem(MB)}$\downarrow$ \\
 			\midrule
 			\textbf{FP16 (baseline)}  & 1009.31 & 54.22 & 956.26 \\
-			\textbf{NF4 (uniform)}    & 953.16  & 54.53 & 513.04 \\
+			\textbf{NF4 (uniform)}    & \textbf{953.16}  & 54.53 & 513.04 \\
 			\midrule
 			\textbf{DynaQ Mix A}      & 1094.60 & \textbf{54.80} & 694.23 \\
 			\textbf{DynaQ Mix B}      & 1091.37 & 54.71 & 622.10 \\
-			\textbf{DynaQ Mix C}      & 978.64  & 54.71 & 532.71 \\
+			\textbf{DynaQ Mix C}      & 978.64  & 54.71 & \textbf{532.71} \\
 			\bottomrule
 		\end{tabular}
-		\vspace{-1em}
+		\caption{\small BoolQ validation results for GPT-2 Medium. The first two rows show uniform quantization baselines (FP16 and NF4). The remaining rows demonstrate our learned DynaQuant mixed-precision schemes.}
 	\end{table}
 	
 	\paragraph{Observations for GPT-2 Medium on BoolQ.}
@@ -437,27 +431,24 @@
 	
 	%----------------------------------------------
 	\subsection{Results on PIQA (GPT-2 Medium)}
-	\label{sec:piqa-medium}
 	
 	\begin{table}[ht]
 		\centering
-		\caption{\small \textbf{PIQA} (GPT-2 Medium, Validation). The first two rows are uniform baselines. The remaining rows are RL-based mixed schemes.}
 		\label{tab:piqa-medium}
 		\begin{tabular}{lcccc}
 			\toprule
-			\textbf{Method} & \textbf{PPL} & \textbf{Acc(\%)} & \textbf{Mem(MB)} \\
+			\textbf{Method} & \textbf{PPL}$\downarrow$ & \textbf{Acc(\%)}$\uparrow$ & \textbf{Mem(MB)}$\downarrow$ \\
 			\midrule
-			\textbf{FP16 (baseline)} & 5791.41 & 64.58 & 956.26 \\
+			\textbf{FP16 (baseline)} & 5791.41 & \textbf{64.58} & 956.26 \\
 			\textbf{NF4 (uniform)}   & 4932.96 & 64.53 & 513.04 \\
 			\midrule
 			\textbf{DynaQ Mix A}     & 5399.04 & 64.42 & 694.23 \\
 			\textbf{DynaQ Mix B}     & 5493.03 & 63.71 & 622.10 \\
-			\textbf{DynaQ Mix C}     & 4894.23 & 64.36 & 532.71 \\
+			\textbf{DynaQ Mix C}     & \textbf{4894.23} & 64.36 & \textbf{532.71} \\
 			\bottomrule
 		\end{tabular}
-		\vspace{-1em}
+		\caption{\small PIQA validation results for GPT-2 Medium. The first two rows show uniform quantization baselines (FP16 and NF4). The remaining rows demonstrate our learned DynaQuant mixed-precision schemes.}
 	\end{table}
-	
 	
 	\textbf{}
 	\\
@@ -545,7 +536,7 @@
 	{\small % Use \small or \footnotesize if desired
 		
 		Below we list all per-layer quantization assignments discovered by \textbf{DynaQuant} 
-		for each “Mix A/B/C/D” in the main text. Each bracketed list shows
+		for each mix in the main text. Each bracketed list shows
 		the formats from layer 0 up to layer \(N-1\).
 		
 		\begin{itemize}
