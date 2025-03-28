@@ -102,7 +102,7 @@
 		
 		\item \textit{Transition}: we quantize layer $i$ in $\mathcal{M}_{\text{quant}}$, then apply \emph{short iterative fine-tuning} on both $\mathcal{M}_{\text{ref}}$ and $\mathcal{M}_{\text{quant}}$, using the \emph{identical} mini-batch for a fixed number of steps. This ensures the agent observes the immediate impact of quantizing that layer.
 		
-		\item \textit{Reward} $r_i$: once both models are briefly fine-tuned, we measure the resulting perplexities, KL divergence, attention entropy, and memory savings. These are combined (with EWAs) into a multi-term scalar reward. Notably, we also incorporate memory usage in the state (by including the quantization bits of the current and previous layers), and the \emph{reward} further reflects how many bits are saved by quantizing the current layer, weighted by that layer’s fraction of total parameters.		
+		\item \textit{Reward} $r_i$: once both models are briefly fine-tuned, we measure the resulting perplexities, KL divergence, attention entropy, and memory savings. These are combined (with EWAs) into a multi-term scalar reward. Notably, we also incorporate memory usage in the state (by including the quantization bits of the current and previous layers), and the \emph{reward} further reflects how many bits are saved by quantizing the current layer, weighted by that layer's fraction of total parameters.		
 	\end{enumerate}
 	
 	At the end of all $N$ layers, the environment signals the episode is complete and the PPO agent updates its policy using the collected trajectory. This cycle repeats until the agent converges on an effective per-layer quantization policy.
@@ -360,7 +360,7 @@
 	\end{table}
 	
 	\paragraph{Observations for GPT-2 Small on BoolQ.}
-	From Table~\ref{tab:boolq-small}, uniform NF4 beats FP16 in perplexity (873.65 vs.\ 920.56) with notably lower memory usage (300.95~MB vs.\ 422.69~MB). Our RL approach (e.g., DynaQ Mix B) lowers perplexity further \emph{and} boosts accuracy significantly (53.85\% vs.\ NF4’s 52.02\%), though at a slight memory overhead (383.15~MB vs.\ NF4’s 300.95~MB).
+	From Table~\ref{tab:boolq-small}, uniform NF4 beats FP16 in perplexity (873.65 vs.\ 920.56) with notably lower memory usage (300.95~MB vs.\ 422.69~MB). Our RL approach (e.g., DynaQ Mix B) lowers perplexity further \emph{and} boosts accuracy significantly (53.85\% vs.\ NF4's 52.02\%), though at a slight memory overhead (383.15~MB vs.\ NF4's 300.95~MB).
 	
 	%----------------------------------------------
 	\subsection{Results on PIQA (GPT-2 Small)}
@@ -471,7 +471,7 @@
 	\section{Conclusion}
 	\label{sec:conclusion}
 	
-	We have presented \textbf{DynaQuant}, an RL-based layer-by-layer quantization approach that adaptively decides which bit-width format to apply per Transformer layer. Our multi-term reward function—using perplexity difference, KL penalty, attention entropy preservation, and memory savings—guides the policy to compress the majority of layers aggressively while preserving or even boosting accuracy. On BoolQ and PIQA, both for GPT-2 Small and GPT-2 Medium, DynaQuant’s \emph{mixed-precision} solutions outperform uniform quantization in perplexity/accuracy trade-offs, with memory footprints in-between purely 4-bit or purely 16-bit options. This suggests that a fine-grained, per-layer approach to quantization can offer a more favorable balance than traditional, strictly uniform settings.
+	We have presented \textbf{DynaQuant}, an RL-based layer-by-layer quantization approach that adaptively decides which bit-width format to apply per Transformer layer. Our multi-term reward function—using perplexity difference, KL penalty, attention entropy preservation, and memory savings—guides the policy to compress the majority of layers aggressively while preserving or even boosting accuracy. On BoolQ and PIQA, both for GPT-2 Small and GPT-2 Medium, DynaQuant's \emph{mixed-precision} solutions outperform uniform quantization in perplexity/accuracy trade-offs, with memory footprints in-between purely 4-bit or purely 16-bit options. This suggests that a fine-grained, per-layer approach to quantization can offer a more favorable balance than traditional, strictly uniform settings.
 		
 	
 	\paragraph{Future Directions.}
@@ -510,9 +510,12 @@
 	
 	\clearpage
 	\appendix
+	
+
+	\begin{figure}[ht]
+	\begin{minipage}[t]{\textwidth} % Align to top
 	\section{Mixed-Precision Schemas for Each Experiment}
 	\label{sec:appendix-schemas}
-	
 	{\small % Use \small or \footnotesize if desired
 		
 		Below we list all per-layer quantization assignments discovered by \textbf{DynaQuant} 
@@ -564,80 +567,56 @@
 			\end{itemize}
 		\end{itemize}
 		
-	} % end \small				
-	
-	\section{Additional GPT-2 Medium Visualizations}
-	\label{sec:appendix-b}
-	
-	In this appendix, we provide supplementary plots and analyses for the GPT-2 Medium experiments. These visualizations show layer-wise attention-entropy distributions, the learned quantization formats across episodes, and detailed reward components over the course of training.
-	
-	\vspace{0.5em}
-	\subsection{Attention Entropy by Layer}
-	\label{sec:medium-attn-entropy}
-	
-	\begin{figure}[ht]
-		\centering
-		% Adjust scale/width if needed
-		\includegraphics[width=1.0\linewidth]{gpt2-medium-250-gae-ewa-rwd-v1_layerstats_attention_entropy.png}
-		\caption{\small
-			\textbf{Attention Entropy Across Layers (GPT-2 Medium).}
-			Each box shows the distribution of average attention entropy values for one layer, collected over multiple episodes. 
-			Layers near the start (indices 0--2) exhibit higher entropy, possibly because they are attending to more general tokens, while deeper layers often have lower entropy, reflecting more specialized attention patterns.
-		}
-		\label{fig:gpt2medium-attn-entropy}
+	} % end \small		
+	\end{minipage}
 	\end{figure}
-	
-	\subsection{Distribution of Quant Types per Layer}
-	\label{sec:medium-quant-dist}
-	
-	\begin{figure}[ht]
-		\centering
-		\includegraphics[width=0.85\linewidth]{images/gpt2-medium-250-gae-ewa-rwd-v1/layer_distribution_plot.png}
-		%{gpt2-medium-250-gae-ewa-rwd-v1_quant_dist_bar.png}
-		\caption{\small
-			\textbf{Quantization Type Distribution.}
-			For each layer index (horizontal axis), we show the fraction of training episodes (vertical) that chose a particular quant format (\texttt{fp16}, \texttt{fp4}, \texttt{int8}, \texttt{nf4}). 
-			We see that middle layers (e.g.\ layers~5--15) are more heavily assigned 4-bit or 8-bit formats, whereas the first and last few layers sometimes remain at \texttt{fp16}.
-		}
-		\label{fig:gpt2medium-quant-dist}
-	\end{figure}
-	
-	\subsection{Binned Quantization Heatmap}
-	\label{sec:medium-heatmap}
-	
-	\begin{figure}[ht]
-		\centering
-		\includegraphics[width=1.0\columnwidth]{images/gpt2-medium-250-gae-ewa-rwd-v1/binned_heatmap.png}
-		%{gpt2-medium-250-gae-ewa-rwd-v1_quant_heatmap_binned.png}
-		\caption{\small
-			\textbf{Quantization Heatmap by Episode Bin.}
-			We group episodes in bins (vertical axis), and layers are shown horizontally. 
-			The color indicates which quant type was chosen for that layer within each bin. 
-			Early bins (top) show more exploration, while later bins (bottom) converge to a predominantly 4-bit strategy (orange), with occasional \texttt{int8} or \texttt{fp16} for sensitive layers.
-		}
-		\label{fig:gpt2medium-binned-heatmap}
-	\end{figure}
-	
-	\subsection{Reward Components Over Episodes}
-	\label{sec:medium-rewards}
-	
-	\begin{figure}[ht]
 		
+	
+
+	\newpage
+	\begin{figure*}[ht!]
 		\centering
-		\includegraphics[width=1.0\columnwidth]{gpt2-medium-250-gae-ewa-rwd-v1_reward_subplots.png}
-		\vspace{-1em}
-		\caption{\small
-			\textbf{Per-Episode Reward Components.}
-			We log each reward component (performance, KL, memory, and entropy) as well as the total reward, in both raw (blue) and exponential moving average (orange) form. 
-			Observe that memory rewards tend to remain positive (due to bit savings), while performance and KL can fluctuate or even be negative if a newly chosen quant format momentarily degrades perplexity or increases divergence. 
-			Overall, the total reward stabilizes around a slightly positive mean, indicating a balanced trade-off across the four objectives.
-		}
-		\label{fig:gpt2medium-rewards}
-	\end{figure}
+		% Appendix title inside the float:
+		\begin{minipage}{\textwidth}
+			\centering
+			\section*{Appendix B: Training Visualizations}
+			\label{sec:appendix-b}
+			\vspace{10pt} % Adds space below the title
+		\end{minipage}
+		
+		\renewcommand{\arraystretch}{1.2}
+		\begin{tabular}{cc}
+        % Row 1: Raw Heatmap
+        \includegraphics[height=0.17\textheight]{images/gpt2-250-gae-ewa-rwd-v1/raw_heatmap.png} &
+        \includegraphics[height=0.17\textheight]{images/gpt2-medium-250-gae-ewa-rwd-v1/raw_heatmap.png} \\
+        \multicolumn{2}{c}{\small \parbox{\textwidth}{(a) \textbf{Quantization Heatmap by Episodes}: Displays episodes and layers, where the color represents the quantization type selected for each layer in a given episode.}} \\
+    
+        % Row 2: Binned Heatmap
+        \includegraphics[height=0.17\textheight]{images/gpt2-250-gae-ewa-rwd-v1/binned_heatmap.png} &
+        \includegraphics[height=0.17\textheight]{images/gpt2-medium-250-gae-ewa-rwd-v1/binned_heatmap.png} \\
+        \multicolumn{2}{c}{\small \parbox{\textwidth}{(b) \textbf{Binned Quantization Heatmap}: Groups episodes into bins, with colors indicating the quantization type assigned to each layer within each bin.}} \\
+    
+        % Row 3: Layer-wise Quantization Distribution
+        \includegraphics[height=0.17\textheight]{images/gpt2-250-gae-ewa-rwd-v1/layer_distribution_plot.png} &
+        \includegraphics[height=0.17\textheight]{images/gpt2-medium-250-gae-ewa-rwd-v1/layer_distribution_plot.png} \\
+        \multicolumn{2}{c}{\small \parbox{\textwidth}{(c) \textbf{Quantization Type Distribution}: Shows the proportion of training episodes that selected each quantization format for each layer index.}} \\
+    
+        % Row 4: Layer Quantization Evolution
+        \includegraphics[height=0.17\textheight]{images/gpt2-250-gae-ewa-rwd-v1/layer_quantization_plot.png} &
+        \includegraphics[height=0.17\textheight]{images/gpt2-medium-250-gae-ewa-rwd-v1/layer_quantization_plot.png} \\
+        \multicolumn{2}{c}{\small \parbox{\textwidth}{(d) \textbf{Quantization Type Progression Over Time}: Illustrates how quantization types evolve throughout training, alongside the memory-saving curve.}} \\
+    
+        % Row 5: Loss Components
+        \includegraphics[height=0.17\textheight]{images/gpt2-250-gae-ewa-rwd-v1/losses_plot.png} &
+        \includegraphics[height=0.17\textheight]{images/gpt2-medium-250-gae-ewa-rwd-v1/losses_plot.png} \\
+        \multicolumn{2}{c}{\small \parbox{\textwidth}{(e) \textbf{Loss Dynamics}: Depicts policy loss, baseline loss, and reward trends over episodes.}} \\
+		\end{tabular}
+		
+		\caption{\small Comparison of GPT-2 Small and GPT-2 Medium training dynamics.}
+		\label{fig:appendix-b}
+	\end{figure*}
 	
-	\vspace{1em}
-	\noindent
-	As shown in these figures, the RL policy for GPT-2 Medium (in this experiment with aggressive optimisation for memory) typically pushes \emph{more} layers toward low-bit formats (NF4 or FP4), but initially preserves higher precision in early and late layers where it observes larger sensitivity in perplexity or attention changes. 
-	The reward breakdown confirms that while performance and KL terms sometimes turn negative after quantizing a “fragile” layer, the net reward remains moderately positive thanks to memory savings and stable attention patterns.				
-	
+
+
+
 \end{document}
